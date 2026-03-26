@@ -8,24 +8,28 @@ Patches and automated builds for [MeshCore](https://github.com/meshcore-dev/Mesh
 |-------|-------------|---------------|
 | [01-firmware-retry](patches/01-firmware-retry.patch) | Auto-retry for DM and group messages with HeardRepeatsService fix | [Details](patches/01-firmware-retry.md) |
 
-## Workflows
+## Pre-built Firmware
 
-### Build Patched Companion Release
+Pre-built firmware for all supported boards is available on the [Releases](../../releases) page. Each release is built from a specific upstream MeshCore version with all patches applied.
 
-Builds **all** companion radio firmware variants and creates a GitHub release with individual firmware files.
+### Flashing
 
-1. Go to **Actions** > **Build Patched Companion Release**
-2. Optionally specify an upstream tag (defaults to latest `companion-*` tag)
-3. Run — firmware files appear as a release under **Releases**
+1. Download the firmware file for your board from the [Releases](../../releases) page
+2. Go to [MeshCore Flasher](https://flasher.meshcore.co.uk/)
+3. Select **Custom Firmware** at the bottom
+4. Upload your firmware file and flash
 
-### Build Companion Radio (Lightweight)
+For more details, see the upstream [MeshCore documentation](https://meshcore.co.uk/docs/).
 
-Builds firmware for a **single board** — faster for development and testing.
+### Building for a specific board
 
-1. Go to **Actions** > **Build Companion Radio (Lightweight)**
-2. Select board, connection type (ble/usb/wifi/all)
-3. Optionally specify an upstream tag
-4. Run — firmware files appear as a downloadable artifact
+If your board isn't in the latest release, you can build it yourself:
+
+1. Fork this repo
+2. Go to **Actions** > **Build Companion Radio (Lightweight)**
+3. Select your board and connection type (ble/usb/wifi/serial/all)
+4. Optionally specify an upstream tag
+5. Run — download the firmware artifact from the completed run
 
 ## Applying Patches Manually
 
