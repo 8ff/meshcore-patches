@@ -31,7 +31,7 @@ jobs:
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           else
-            TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/meshcore-dev/MeshCore.git 'refs/tags/companion-*' | head -1 | sed 's/.*refs\/tags\///')
+            TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/meshcore-dev/MeshCore.git 'refs/tags/companion-*' | grep -v '\^{}' | head -1 | sed 's/.*refs\/tags\///')
             if [ -z "$TAG" ]; then
               echo "::error::No companion-* tags found upstream"
               exit 1
