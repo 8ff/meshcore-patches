@@ -47,16 +47,6 @@ on:
           - usb
           - wifi
           - all
-      disable_debug:
-        description: 'Disable debug logging'
-        required: false
-        type: boolean
-        default: true
-      mesh_debug:
-        description: 'Enable MESH_DEBUG (serial debug output for retry logging, etc.)'
-        required: false
-        type: boolean
-        default: false
 
 jobs:
 
@@ -98,11 +88,8 @@ jobs:
       - name: Apply patches
         working-directory: firmware
         run: |
-          echo "Applying firmware patch..."
           git apply ../patches-repo/patches/01-firmware-retry.patch
-          echo "Applying build/CI patch..."
-          git apply ../patches-repo/patches/02-build-ci.patch
-          echo "Patches applied successfully"
+          echo "Patch applied successfully"
 
       - name: Setup Build Environment
         uses: ./firmware/.github/actions/setup-build-environment
@@ -111,8 +98,6 @@ jobs:
         working-directory: firmware
         env:
           FIRMWARE_VERSION: ${{ steps.resolve.outputs.version }}-patched
-          DISABLE_DEBUG: ${{ (inputs.disable_debug && !inputs.mesh_debug) && '1' || '0' }}
-          PLATFORMIO_BUILD_FLAGS: ${{ inputs.mesh_debug && '-DMESH_DEBUG=1' || '' }}
           BUILD_BOARD: ${{ inputs.board }}
           BUILD_CONNECTION: ${{ inputs.connection_type }}
         run: |

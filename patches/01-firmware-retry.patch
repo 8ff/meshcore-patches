@@ -72,10 +72,10 @@ index 4271729b..5dc57df1 100644
    // DataStoreHost methods
    bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
 diff --git a/src/helpers/BaseChatMesh.cpp b/src/helpers/BaseChatMesh.cpp
-index 33d7edbe..e1252b41 100644
+index 33d7edbe..d95dcade 100644
 --- a/src/helpers/BaseChatMesh.cpp
 +++ b/src/helpers/BaseChatMesh.cpp
-@@ -16,6 +16,21 @@ void BaseChatMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Pack
+@@ -16,6 +16,20 @@ void BaseChatMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Pack
    sendFlood(pkt, delay_millis);
  }
  
@@ -85,7 +85,6 @@ index 33d7edbe..e1252b41 100644
 +    packet->calculatePacketHash(pkt_hash);
 +    if (memcmp(pkt_hash, _sent_group_hash, MAX_HASH_SIZE) == 0) {
 +      // Our group message was heard and retransmitted by another node
-+      MESH_DEBUG_PRINTLN("group-retry: heard by repeater, cancelling retries");
 +      onAutoRetryAttempt(true, _group_retry.retry_count, getGroupAutoRetryMax(), true);
 +      _has_pending_group_retry = false;
 +      grp_send_timeout = 0;
@@ -97,29 +96,22 @@ index 33d7edbe..e1252b41 100644
  mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name) {
    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
    uint8_t app_data_len;
-@@ -313,6 +328,15 @@ bool BaseChatMesh::onContactPathRecv(ContactInfo& from, uint8_t* in_path, uint8_
+@@ -313,6 +327,11 @@ bool BaseChatMesh::onContactPathRecv(ContactInfo& from, uint8_t* in_path, uint8_
      // also got an encoded ACK!
      if (processAck(extra) != NULL) {
        txt_send_timeout = 0;   // matched one we're waiting for, cancel timeout timer
-+      if (_has_pending_retry) {
-+        MESH_DEBUG_PRINTLN("auto-retry: ACK received after %d retries (via path)", _retry.retry_count);
-+      }
 +      _has_pending_retry = false;  // ACK received, stop auto-retrying
 +    } else if (_has_pending_retry && memcmp(extra, &_retry.expected_ack, 4) == 0) {
-+      MESH_DEBUG_PRINTLN("auto-retry: ACK matched retried msg after %d retries (via path)", _retry.retry_count);
 +      onRetryAckReceived(_retry.recipient, _retry.retry_count);
 +      txt_send_timeout = 0;
 +      _has_pending_retry = false;
      }
    } else if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
      onContactResponse(from, extra, extra_len);
-@@ -324,12 +348,23 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
+@@ -324,12 +343,19 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
    ContactInfo* from;
    if ((from = processAck((uint8_t *)&ack_crc)) != NULL) {
      txt_send_timeout = 0;   // matched one we're waiting for, cancel timeout timer
-+    if (_has_pending_retry) {
-+      MESH_DEBUG_PRINTLN("auto-retry: ACK received after %d retries", _retry.retry_count);
-+    }
 +    _has_pending_retry = false;  // ACK received, stop auto-retrying
      packet->markDoNotRetransmit();   // ACK was for this node, so don't retransmit
  
@@ -129,7 +121,6 @@ index 33d7edbe..e1252b41 100644
      }
 +  } else if (_has_pending_retry && memcmp(&ack_crc, &_retry.expected_ack, 4) == 0) {
 +    // ACK matches a retried message - stop retrying
-+    MESH_DEBUG_PRINTLN("auto-retry: ACK matched retried msg after %d retries", _retry.retry_count);
 +    onRetryAckReceived(_retry.recipient, _retry.retry_count);
 +    txt_send_timeout = 0;
 +    _has_pending_retry = false;
@@ -137,7 +128,7 @@ index 33d7edbe..e1252b41 100644
    }
  }
  
-@@ -404,10 +439,25 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
+@@ -404,10 +430,25 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
      txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
      rc = MSG_SEND_SENT_DIRECT;
    }
@@ -163,7 +154,7 @@ index 33d7edbe..e1252b41 100644
    int text_len = strlen(text);
    if (text_len > MAX_TEXT_LEN) return MSG_SEND_FAILED;
  
-@@ -448,7 +498,24 @@ bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& chan
+@@ -448,7 +489,24 @@ bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& chan
  
    auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + prefix_len + text_len);
    if (pkt) {
@@ -188,7 +179,7 @@ index 33d7edbe..e1252b41 100644
      return true;
    }
    return false;
-@@ -874,9 +941,91 @@ void BaseChatMesh::loop() {
+@@ -874,9 +932,85 @@ void BaseChatMesh::loop() {
    Mesh::loop();
  
    if (txt_send_timeout && millisHasNowPassed(txt_send_timeout)) {
@@ -199,7 +190,6 @@ index 33d7edbe..e1252b41 100644
 +      // Auto-retry: resend the message with incremented attempt
 +      _retry.retry_count++;
 +      _retry.attempt++;
-+      MESH_DEBUG_PRINTLN("auto-retry: retry %d/%d (attempt=%d)", _retry.retry_count, getAutoRetryMax(), _retry.attempt);
 +      onAutoRetryAttempt(false, _retry.retry_count, getAutoRetryMax(), false);
 +
 +      uint32_t expected_ack;
@@ -216,8 +206,7 @@ index 33d7edbe..e1252b41 100644
 +          txt_send_timeout = futureMillis(calcDirectTimeoutMillisFor(t, _retry.recipient.out_path_len));
 +        }
 +      } else {
-+        // composeMsgPacket failed (e.g. text too long for attempt > 3), stop retrying
-+        MESH_DEBUG_PRINTLN("auto-retry: composeMsgPacket failed at retry %d, stopping", _retry.retry_count);
++        // composeMsgPacket failed, stop retrying
 +        onAutoRetryAttempt(false, _retry.retry_count, getAutoRetryMax(), true);
 +        _has_pending_retry = false;
 +        onSendTimeout();
@@ -226,7 +215,6 @@ index 33d7edbe..e1252b41 100644
 +    } else {
 +      // all retries exhausted or no retry pending
 +      if (_has_pending_retry) {
-+        MESH_DEBUG_PRINTLN("auto-retry: all %d retries exhausted, giving up", _retry.retry_count);
 +        onAutoRetryAttempt(false, _retry.retry_count, getAutoRetryMax(), true);
 +      }
 +      _has_pending_retry = false;
@@ -244,7 +232,6 @@ index 33d7edbe..e1252b41 100644
 +      // original sent message by timestamp. Instead, a retry nonce byte is appended after
 +      // the null-terminated text to produce a different packet hash (avoids mesh dedup).
 +      // This follows the same pattern used by DM retries in composeMsgPacket().
-+      MESH_DEBUG_PRINTLN("group-retry: retry %d/%d", _group_retry.retry_count, getGroupAutoRetryMax());
 +      onAutoRetryAttempt(true, _group_retry.retry_count, getGroupAutoRetryMax(), false);
 +
 +      // Recreate and resend the group message
@@ -267,14 +254,12 @@ index 33d7edbe..e1252b41 100644
 +        sendFloodScoped(_group_retry.channel, pkt);
 +        grp_send_timeout = futureMillis(getGroupRetryInterval());
 +      } else {
-+        MESH_DEBUG_PRINTLN("group-retry: createGroupDatagram failed at retry %d, stopping", _group_retry.retry_count);
 +        onAutoRetryAttempt(true, _group_retry.retry_count, getGroupAutoRetryMax(), true);
 +        _has_pending_group_retry = false;
 +        grp_send_timeout = 0;
 +      }
 +    } else {
 +      if (_has_pending_group_retry) {
-+        MESH_DEBUG_PRINTLN("group-retry: all %d retries done", _group_retry.retry_count);
 +        onAutoRetryAttempt(true, _group_retry.retry_count, getGroupAutoRetryMax(), true);
 +      }
 +      _has_pending_group_retry = false;

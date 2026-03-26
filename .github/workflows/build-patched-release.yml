@@ -52,11 +52,8 @@ jobs:
       - name: Apply patches
         working-directory: firmware
         run: |
-          echo "Applying firmware patch..."
           git apply ../patches-repo/patches/01-firmware-retry.patch
-          echo "Applying build/CI patch..."
-          git apply ../patches-repo/patches/02-build-ci.patch
-          echo "Patches applied successfully"
+          echo "Patch applied successfully"
 
       - name: Setup Build Environment
         uses: ./firmware/.github/actions/setup-build-environment
@@ -65,7 +62,6 @@ jobs:
         working-directory: firmware
         env:
           FIRMWARE_VERSION: ${{ steps.resolve.outputs.version }}-patched
-          DISABLE_DEBUG: '1'
         run: /usr/bin/env bash build.sh build-companion-firmwares
 
       - name: Create Release
