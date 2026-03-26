@@ -52,6 +52,3 @@ git checkout companion-v1.14.1  # or any release tag
 git apply /path/to/patches/01-firmware-retry.patch
 ```
 
----
-
-<sub>MIT — matching [upstream MeshCore](https://github.com/meshcore-dev/MeshCore).</sub>
