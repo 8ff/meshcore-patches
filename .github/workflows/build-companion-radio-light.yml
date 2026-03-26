@@ -1,0 +1,129 @@
+name: Build Companion Radio (Lightweight)
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Upstream tag (leave empty for latest companion-* tag)'
+        required: false
+        type: string
+        default: ''
+      board:
+        description: 'Board to build'
+        required: true
+        type: choice
+        options:
+          - Heltec_v2
+          - Heltec_v3
+          - heltec_v4
+          - heltec_v4_tft
+          - Heltec_ct62
+          - Heltec_E213
+          - Heltec_E290
+          - Heltec_mesh_solar
+          - Heltec_t114
+          - Heltec_t114_without_display
+          - Heltec_T190
+          - heltec_tracker_v2
+          - Heltec_Wireless_Paper
+          - Heltec_Wireless_Tracker
+          - Heltec_WSL3
+          - RAK_11310
+          - RAK_3112
+          - RAK_3401
+          - RAK_3x72
+          - RAK_4631
+          - RAK_WisMesh_Tag
+          - t1000e
+      connection_type:
+        description: 'Connection type'
+        required: true
+        type: choice
+        options:
+          - ble
+          - usb
+          - wifi
+          - all
+      disable_debug:
+        description: 'Disable debug logging'
+        required: false
+        type: boolean
+        default: true
+      mesh_debug:
+        description: 'Enable MESH_DEBUG (serial debug output for retry logging, etc.)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout patches
+        uses: actions/checkout@v4
+        with:
+          path: patches-repo
+
+      - name: Resolve upstream tag
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/meshcore-dev/MeshCore.git 'refs/tags/companion-*' | head -1 | sed 's/.*refs\/tags\///')
+            if [ -z "$TAG" ]; then
+              echo "::error::No companion-* tags found upstream"
+              exit 1
+            fi
+          fi
+          VERSION="${TAG##*-}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved upstream tag: $TAG (version: $VERSION)"
+
+      - name: Clone upstream at tag
+        uses: actions/checkout@v4
+        with:
+          repository: meshcore-dev/MeshCore
+          ref: ${{ steps.resolve.outputs.tag }}
+          path: firmware
+
+      - name: Apply patches
+        working-directory: firmware
+        run: |
+          echo "Applying firmware patch..."
+          git apply ../patches-repo/patches/01-firmware-retry.patch
+          echo "Applying build/CI patch..."
+          git apply ../patches-repo/patches/02-build-ci.patch
+          echo "Patches applied successfully"
+
+      - name: Setup Build Environment
+        uses: ./firmware/.github/actions/setup-build-environment
+
+      - name: Build Companion Radio Firmware
+        working-directory: firmware
+        env:
+          FIRMWARE_VERSION: ${{ steps.resolve.outputs.version }}-patched
+          DISABLE_DEBUG: ${{ (inputs.disable_debug && !inputs.mesh_debug) && '1' || '0' }}
+          PLATFORMIO_BUILD_FLAGS: ${{ inputs.mesh_debug && '-DMESH_DEBUG=1' || '' }}
+          BUILD_BOARD: ${{ inputs.board }}
+          BUILD_CONNECTION: ${{ inputs.connection_type }}
+        run: |
+          if [ "$BUILD_CONNECTION" == "all" ]; then
+            /usr/bin/env bash build.sh build-matching-firmwares "${BUILD_BOARD}_companion"
+          else
+            /usr/bin/env bash build.sh build-matching-firmwares "${BUILD_BOARD}_companion_radio_${BUILD_CONNECTION}"
+          fi
+
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-radio-${{ inputs.board }}-${{ inputs.connection_type }}
+          path: firmware/out
