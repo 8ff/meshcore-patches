@@ -16,10 +16,9 @@ on:
         required: true
         type: choice
         options:
-          - Heltec_v2
-          - Heltec_v3
-          - heltec_v4
-          - heltec_v4_tft
+          - Ebyte_EoRa-S3
+          - GAT562_30S_Mesh_Kit
+          - GAT562_Mesh_Tracker_Pro
           - Heltec_ct62
           - Heltec_E213
           - Heltec_E290
@@ -28,16 +27,71 @@ on:
           - Heltec_t114_without_display
           - Heltec_T190
           - heltec_tracker_v2
+          - Heltec_v2
+          - Heltec_v3
+          - heltec_v4
+          - heltec_v4_tft
           - Heltec_Wireless_Paper
           - Heltec_Wireless_Tracker
           - Heltec_WSL3
+          - ikoka_handheld_nrf_e22_30dbm_096
+          - ikoka_handheld_nrf_e22_30dbm_096_rotated
+          - ikoka_nano_nrf_22dbm
+          - ikoka_nano_nrf_30dbm
+          - ikoka_nano_nrf_33dbm
+          - ikoka_stick_nrf_22dbm
+          - ikoka_stick_nrf_30dbm
+          - ikoka_stick_nrf_33dbm
+          - KeepteenLT1
+          - LilyGo_T-Echo
+          - LilyGo_T-Echo-Lite
+          - LilyGo_T3S3_sx1262
+          - LilyGo_T3S3_sx1276
+          - LilyGo_TBeam_1W
+          - LilyGo_TDeck
+          - LilyGo_TLora_V2_1_1_6
+          - LilyGo_Tlora_C6
+          - M5Stack_Unit_C6L
+          - Mesh_pocket
+          - Meshadventurer_sx1262
+          - Meshadventurer_sx1268
+          - Meshimi
+          - Meshtiny
+          - Minewsemi_me25ls01
+          - Nano_G2_Ultra
+          - nibble_screen_connect
+          - PicoW
+          - ProMicro
           - RAK_11310
           - RAK_3112
           - RAK_3401
           - RAK_3x72
           - RAK_4631
           - RAK_WisMesh_Tag
+          - SenseCap_Solar
+          - Station_G2
+          - T_Beam_S3_Supreme_SX1262
+          - Tbeam_SX1262
+          - Tbeam_SX1276
+          - ThinkNode_M1
+          - ThinkNode_M2
+          - ThinkNode_M3
+          - ThinkNode_M5
+          - ThinkNode_M6
+          - Tiny_Relay
           - t1000e
+          - waveshare_rp2040_lora
+          - WHY2025_badge
+          - wio-e5
+          - wio-e5-mini
+          - wio_wm1110
+          - WioTrackerL1
+          - WioTrackerL1Eink
+          - Xiao_C3
+          - Xiao_C6
+          - Xiao_nrf52
+          - Xiao_rp2040
+          - Xiao_S3_WIO
       connection_type:
         description: 'Connection type'
         required: true
@@ -46,6 +100,7 @@ on:
           - ble
           - usb
           - wifi
+          - serial
           - all
 
 jobs:
