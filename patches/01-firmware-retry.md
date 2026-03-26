@@ -1,5 +1,14 @@
 # Auto-Retry for DM and Group Messages
 
+### Highlights
+
+- **DM auto-retry** — firmware retries up to 200 times in the background, even after the app shows "Failed". Updates to "Delivered" when it finally goes through.
+- **Group/channel auto-retry** — retries every 10 seconds with echo detection. Companion app shows "X repeats heard" when repeaters pick it up.
+- **No app changes needed** — works with existing iOS, Flutter, and JS companion apps.
+- **No network spam** — retries are paced, cancelled on delivery, and use standard mesh dedup.
+
+---
+
 ## Overview
 
 MeshCore firmware retries failed DMs up to approximately 5 times before marking the message as "Failed" in the companion app. For group/channel messages, there is no retry at all. This patch extends the retry mechanism to keep trying in the background — up to 200 times (configurable, will change in the future) — even after the app shows "Failed". When a retry eventually succeeds, the app updates the message status from "Failed" to "Delivered" (DMs) or shows "X repeats heard" (channel messages). No companion app changes required.

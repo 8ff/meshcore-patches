@@ -1,8 +1,9 @@
 # meshcore-patches
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/8ff/meshcore-patches/build-patched-release.yml?label=build)](https://github.com/8ff/meshcore-patches/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/8ff/meshcore-patches/build-patched-release.yml?branch=main&label=build)](https://github.com/8ff/meshcore-patches/actions)
+[![Release](https://img.shields.io/github/v/release/8ff/meshcore-patches?label=latest)](../../releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
-[![MeshCore](https://img.shields.io/badge/upstream-MeshCore-orange)](https://github.com/meshcore-dev/MeshCore)
+[![Upstream](https://img.shields.io/badge/upstream-MeshCore%20v1.14.1-orange)](https://github.com/meshcore-dev/MeshCore/releases/tag/companion-v1.14.1)
 
 > Patches and automated builds for [MeshCore](https://github.com/meshcore-dev/MeshCore) companion radio firmware.
 
@@ -10,16 +11,9 @@
 
 ## Patches
 
-| # | Patch | What it does |
-|---|-------|-------------|
-| 01 | [firmware-retry](patches/01-firmware-retry.patch) | Auto-retry for DM and group messages with HeardRepeatsService fix — [read more](patches/01-firmware-retry.md) |
-
-### Highlights
-
-- **DM auto-retry** — firmware retries up to 200 times in the background, even after the app shows "Failed". Updates to "Delivered" when it finally goes through.
-- **Group/channel auto-retry** — retries every 10 seconds with echo detection. Companion app shows "X repeats heard" when repeaters pick it up.
-- **No app changes needed** — works with existing iOS, Flutter, and JS companion apps.
-- **No network spam** — retries are paced, cancelled on delivery, and use standard mesh dedup.
+| # | Patch | Description | Docs |
+|---|-------|-------------|------|
+| 01 | [firmware-retry](patches/01-firmware-retry.patch) | Keeps retrying DM and group messages in the background until they go through — shows "Delivered" or "X repeats heard" even after the app gives up | [Details](patches/01-firmware-retry.md) |
 
 ---
 
