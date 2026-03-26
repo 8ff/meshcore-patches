@@ -2,7 +2,7 @@
 
 [![Build](https://img.shields.io/github/actions/workflow/status/8ff/meshcore-patches/build-patched-release.yml?branch=main&label=build)](https://github.com/8ff/meshcore-patches/actions)
 [![Release](https://img.shields.io/github/v/release/8ff/meshcore-patches?label=latest)](../../releases)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Upstream](https://img.shields.io/badge/upstream-MeshCore%20v1.14.1-orange)](https://github.com/meshcore-dev/MeshCore/releases/tag/companion-v1.14.1)
 
 > Patches and automated builds for [MeshCore](https://github.com/meshcore-dev/MeshCore) companion radio firmware.
@@ -54,4 +54,4 @@ git apply /path/to/patches/01-firmware-retry.patch
 
 ---
 
-<sub>GPL-3.0 — matching [upstream MeshCore](https://github.com/meshcore-dev/MeshCore).</sub>
+<sub>MIT — matching [upstream MeshCore](https://github.com/meshcore-dev/MeshCore).</sub>
