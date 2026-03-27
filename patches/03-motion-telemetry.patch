@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 24e8894..ebaf681 100644
+index 24e8894..7f226c5 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -258,6 +258,11 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
@@ -14,6 +14,17 @@ index 24e8894..ebaf681 100644
      uint8_t tlen = telemetry.getSize();
      memcpy(&reply_data[4], telemetry.getBuffer(), tlen);
      return 4 + tlen; // reply_len
+@@ -928,6 +933,10 @@ void MyMesh::begin(FILESYSTEM *fs) {
+ 
+   board.setAdcMultiplier(_prefs.adc_multiplier);
+ 
++#ifdef MOTION_TELEMETRY_ENABLED
++  pinMode(MOTION_TELEM_PIN, INPUT_PULLDOWN);
++#endif
++
+ #if ENV_INCLUDE_GPS == 1
+   applyGpsPrefs();
+ #endif
 diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
 index 9295844..6a93169 100644
 --- a/examples/simple_repeater/MyMesh.h
