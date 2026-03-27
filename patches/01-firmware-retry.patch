@@ -72,7 +72,7 @@ index 4271729..5dc57df 100644
    // DataStoreHost methods
    bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
 diff --git a/src/helpers/BaseChatMesh.cpp b/src/helpers/BaseChatMesh.cpp
-index 33d7edb..53b8700 100644
+index 33d7edb..f404310 100644
 --- a/src/helpers/BaseChatMesh.cpp
 +++ b/src/helpers/BaseChatMesh.cpp
 @@ -16,6 +16,20 @@ void BaseChatMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Pack
@@ -179,7 +179,7 @@ index 33d7edb..53b8700 100644
      return true;
    }
    return false;
-@@ -874,9 +932,85 @@ void BaseChatMesh::loop() {
+@@ -874,9 +932,93 @@ void BaseChatMesh::loop() {
    Mesh::loop();
  
    if (txt_send_timeout && millisHasNowPassed(txt_send_timeout)) {
@@ -190,6 +190,14 @@ index 33d7edb..53b8700 100644
 +      // Auto-retry: resend the message with incremented attempt
 +      _retry.retry_count++;
 +      _retry.attempt++;
++
++      // Re-read current path from contacts table (may have been reset by user or updated by mesh)
++      ContactInfo* live = lookupContactByPubKey(_retry.recipient.id.pub_key, PUB_KEY_SIZE);
++      if (live) {
++        _retry.recipient.out_path_len = live->out_path_len;
++        memcpy(_retry.recipient.out_path, live->out_path, MAX_PATH_SIZE);
++      }
++
 +      onAutoRetryAttempt(false, _retry.retry_count, getAutoRetryMax(), false);
 +
 +      uint32_t expected_ack;
