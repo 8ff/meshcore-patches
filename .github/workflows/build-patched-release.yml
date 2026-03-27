@@ -1,4 +1,4 @@
-name: Build Patched Companion Release
+name: Build Patched Release
 
 permissions:
   contents: write
@@ -7,10 +7,30 @@ on:
   workflow_dispatch:
     inputs:
       upstream_tag:
-        description: 'Upstream tag (leave empty for latest companion-* tag)'
+        description: 'Upstream tag (leave empty for auto-detect based on role)'
         required: false
         type: string
         default: ''
+      role:
+        description: 'Firmware role'
+        type: choice
+        options:
+          - companion
+          - repeater
+          - both
+        default: companion
+      patch_firmware_retry:
+        description: 'Patch 01: DM/group auto-retry'
+        type: boolean
+        default: true
+      patch_motion_alert:
+        description: 'Patch 02: Motion alert (channel broadcast)'
+        type: boolean
+        default: false
+      patch_motion_telemetry:
+        description: 'Patch 03: Motion telemetry (presence)'
+        type: boolean
+        default: false
 
 jobs:
 
@@ -27,13 +47,19 @@ jobs:
         id: resolve
         env:
           INPUT_TAG: ${{ inputs.upstream_tag }}
+          ROLE: ${{ inputs.role }}
         run: |
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           else
-            TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/meshcore-dev/MeshCore.git 'refs/tags/companion-*' | grep -v '\^{}' | head -1 | sed 's/.*refs\/tags\///')
+            if [ "$ROLE" == "repeater" ]; then
+              PATTERN="refs/tags/repeater-*"
+            else
+              PATTERN="refs/tags/companion-*"
+            fi
+            TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/meshcore-dev/MeshCore.git "$PATTERN" | grep -v '\^{}' | head -1 | sed 's/.*refs\/tags\///')
             if [ -z "$TAG" ]; then
-              echo "::error::No companion-* tags found upstream"
+              echo "::error::No matching tags found upstream"
               exit 1
             fi
           fi
@@ -51,31 +77,94 @@ jobs:
 
       - name: Apply patches
         working-directory: firmware
+        env:
+          PATCH_01: ${{ inputs.patch_firmware_retry }}
+          PATCH_02: ${{ inputs.patch_motion_alert }}
+          PATCH_03: ${{ inputs.patch_motion_telemetry }}
         run: |
-          git apply ../patches-repo/patches/01-firmware-retry.patch
-          echo "Patch applied successfully"
+          APPLIED=""
+          if [ "$PATCH_01" == "true" ]; then
+            git apply ../patches-repo/patches/01-firmware-retry.patch
+            APPLIED="${APPLIED}01-firmware-retry "
+          fi
+          if [ "$PATCH_02" == "true" ]; then
+            git apply ../patches-repo/patches/02-motion-alert.patch
+            APPLIED="${APPLIED}02-motion-alert "
+          fi
+          if [ "$PATCH_03" == "true" ]; then
+            git apply ../patches-repo/patches/03-motion-telemetry.patch
+            APPLIED="${APPLIED}03-motion-telemetry "
+          fi
+          if [ -z "$APPLIED" ]; then
+            echo "::warning::No patches selected"
+          else
+            echo "Applied: $APPLIED"
+          fi
+
+      - name: Set patch build flags
+        env:
+          PATCH_02: ${{ inputs.patch_motion_alert }}
+          PATCH_03: ${{ inputs.patch_motion_telemetry }}
+        run: |
+          FLAGS=""
+          if [ "$PATCH_02" == "true" ]; then
+            FLAGS="$FLAGS -DMOTION_ALERT_ENABLED"
+          fi
+          if [ "$PATCH_03" == "true" ]; then
+            FLAGS="$FLAGS -DMOTION_TELEMETRY_ENABLED"
+          fi
+          if [ -n "$FLAGS" ]; then
+            echo "PLATFORMIO_BUILD_FLAGS=$FLAGS" >> "$GITHUB_ENV"
+            echo "Patch build flags: $FLAGS"
+          fi
 
       - name: Setup Build Environment
         uses: ./firmware/.github/actions/setup-build-environment
 
-      - name: Build all companion firmwares
+      - name: Build companion firmwares
+        if: inputs.role == 'companion' || inputs.role == 'both'
         working-directory: firmware
         env:
           FIRMWARE_VERSION: ${{ steps.resolve.outputs.version }}-patched
         run: /usr/bin/env bash build.sh build-companion-firmwares
 
+      - name: Build repeater firmwares
+        if: inputs.role == 'repeater' || inputs.role == 'both'
+        working-directory: firmware
+        env:
+          FIRMWARE_VERSION: ${{ steps.resolve.outputs.version }}-patched
+        run: /usr/bin/env bash build.sh build-repeater-firmwares
+
+      - name: Generate release body
+        id: body
+        env:
+          PATCH_01: ${{ inputs.patch_firmware_retry }}
+          PATCH_02: ${{ inputs.patch_motion_alert }}
+          PATCH_03: ${{ inputs.patch_motion_telemetry }}
+          RESOLVED_TAG: ${{ steps.resolve.outputs.tag }}
+          BUILD_ROLE: ${{ inputs.role }}
+        run: |
+          {
+            echo "body<<EOFBODY"
+            echo "Patched firmware built from upstream [\`${RESOLVED_TAG}\`](https://github.com/meshcore-dev/MeshCore/releases/tag/${RESOLVED_TAG})."
+            echo ""
+            echo "**Role:** ${BUILD_ROLE}"
+            echo ""
+            echo "**Patches applied:**"
+            [ "$PATCH_01" == "true" ] && echo "- 01: DM/group auto-retry"
+            [ "$PATCH_02" == "true" ] && echo "- 02: Motion alert (channel broadcast)"
+            [ "$PATCH_03" == "true" ] && echo "- 03: Motion telemetry (presence)"
+            if [ "$PATCH_01" != "true" ] && [ "$PATCH_02" != "true" ] && [ "$PATCH_03" != "true" ]; then
+              echo "- (none)"
+            fi
+            echo "EOFBODY"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: patched-${{ steps.resolve.outputs.tag }}
-          name: "Patched Companion ${{ steps.resolve.outputs.version }}"
+          tag_name: patched-${{ inputs.role }}-${{ steps.resolve.outputs.tag }}
+          name: "Patched ${{ inputs.role }} ${{ steps.resolve.outputs.version }}"
           draft: false
-          body: |
-            Auto-retry patched companion firmware built from upstream [`${{ steps.resolve.outputs.tag }}`](https://github.com/meshcore-dev/MeshCore/releases/tag/${{ steps.resolve.outputs.tag }}).
-
-            **Patches applied:**
-            - DM auto-retry (up to 200 attempts, ACK-based cancellation)
-            - Group message auto-retry (up to 200 attempts, 10s interval, echo detection)
-            - HeardRepeatsService fix (retry nonce instead of timestamp increment)
-            - DM retry ACK confirmation for retried deliveries
+          body: ${{ steps.body.outputs.body }}
           files: firmware/out/*

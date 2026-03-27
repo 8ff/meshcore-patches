@@ -1,0 +1,38 @@
+diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
+index 24e8894..ebaf681 100644
+--- a/examples/simple_repeater/MyMesh.cpp
++++ b/examples/simple_repeater/MyMesh.cpp
+@@ -258,6 +258,11 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
+       telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature); // Built-in MCU Temperature
+     }
+ 
++#ifdef MOTION_TELEMETRY_ENABLED
++    int motion_val = analogRead(MOTION_TELEM_PIN);
++    telemetry.addPresence(TELEM_CHANNEL_SELF, motion_val >= MOTION_TELEM_THRESHOLD ? 1 : 0);
++#endif
++
+     uint8_t tlen = telemetry.getSize();
+     memcpy(&reply_data[4], telemetry.getBuffer(), tlen);
+     return 4 + tlen; // reply_len
+diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
+index 9295844..6a93169 100644
+--- a/examples/simple_repeater/MyMesh.h
++++ b/examples/simple_repeater/MyMesh.h
+@@ -57,6 +57,17 @@ struct RepeaterStats {
+   uint32_t n_recv_errors;
+ };
+ 
++// --- Motion telemetry config ---
++#ifdef MOTION_TELEMETRY_ENABLED
++  #ifndef MOTION_TELEM_PIN
++    #define MOTION_TELEM_PIN WB_A1  // RAK19007 AIN1 -> nRF52840 P0.31
++  #endif
++  #ifndef MOTION_TELEM_THRESHOLD
++    #define MOTION_TELEM_THRESHOLD 100  // ADC threshold (~0.35V of 10-bit, 3.6V range)
++  #endif
++#endif
++// --- End motion telemetry config ---
++
+ #ifndef MAX_CLIENTS
+   #define MAX_CLIENTS           32
+ #endif
