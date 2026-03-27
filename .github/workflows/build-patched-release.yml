@@ -70,6 +70,7 @@ jobs:
           tag_name: patched-${{ steps.resolve.outputs.tag }}
           name: "Patched Companion ${{ steps.resolve.outputs.version }}"
           draft: false
+          overwrite: true
           body: |
             Auto-retry patched companion firmware built from upstream [`${{ steps.resolve.outputs.tag }}`](https://github.com/meshcore-dev/MeshCore/releases/tag/${{ steps.resolve.outputs.tag }}).
 
