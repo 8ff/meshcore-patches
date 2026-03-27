@@ -3,9 +3,10 @@
 ### Highlights
 
 - **DM auto-retry** — firmware retries up to 200 times in the background, even after the app shows "Failed". Updates to "Delivered" when it finally goes through.
-- **Group/channel auto-retry** — retries every 10 seconds with echo detection. Companion app shows "X repeats heard" when repeaters pick it up.
+- **Group/channel auto-retry** — retries with echo detection. Companion app shows "X repeats heard" when repeaters pick it up.
+- **Gradual backoff** — retries start fast (~4s for DMs, 10s for groups), then slow to 3x after 5 retries and 6x after 20. Extends the retry window to ~1.5 hours (DMs) or ~3 hours (groups) while conserving battery.
 - **No app changes needed** — works with existing iOS, Flutter, and JS companion apps.
-- **No network spam** — retries are paced, cancelled on delivery, and use standard mesh dedup.
+- **No network spam** — retries are paced with backoff, cancelled on delivery, and use standard mesh dedup.
 
 ---
 
@@ -28,13 +29,13 @@ When a DM is sent and no ACK is received within the timeout window, the firmware
 - An ACK is received (message delivered)
 - The maximum retry count is reached (default: 200)
 
-The companion app may show the message as **"Failed"** after its own short timeout (typically 3-5 attempts), but the firmware continues retrying in the background for up to 200 attempts. When delivery eventually succeeds, the firmware sends `PUSH_CODE_SEND_CONFIRMED` (0x82) with the original ACK hash, and the app updates the message status from **"Failed"** to **"Delivered"**.
+The companion app may show the message as **"Failed"** after its own short timeout (typically 3-5 attempts), but the firmware continues retrying in the background for up to 200 attempts with gradual backoff — the first 5 retries use the calculated ACK timeout (~4s), retries 6–20 wait 3x longer (~13s), and retries 21+ wait 6x longer (~27s). This extends the total retry window to approximately 1.5 hours. When delivery eventually succeeds, the firmware sends `PUSH_CODE_SEND_CONFIRMED` (0x82) with the original ACK hash, and the app updates the message status from **"Failed"** to **"Delivered"**.
 
 ### Group/Channel Messages
 
 Group messages use flood routing with no ACK mechanism. Instead, the firmware detects **echoes** — when a repeater re-broadcasts the message, the firmware receives a copy of its own packet with a matching hash.
 
-Retries are sent every 10 seconds (configurable). Each retry appends a nonce byte after the null-terminated text to produce a different packet hash, which prevents mesh nodes from dropping the retry as a duplicate. The original timestamp is preserved so that the iOS companion app's `HeardRepeatsService` can match the echoed message and display **"X repeats heard"**.
+Retries start every 10 seconds (configurable via `MESH_GROUP_RETRY_INTERVAL`) and gradually back off — 10s for the first 5 retries, 30s for retries 6–20, then 60s for retries 21+. Each retry appends a nonce byte after the null-terminated text to produce a different packet hash, which prevents mesh nodes from dropping the retry as a duplicate. The original timestamp is preserved so that the iOS companion app's `HeardRepeatsService` can match the echoed message and display **"X repeats heard"**.
 
 When an echo is detected, retries are cancelled immediately. A 0x91 push frame with `is_final` set is sent to the companion app.
 
