@@ -1,5 +1,5 @@
 diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
-index 24e8894..7f226c5 100644
+index 24e8894..73701f3 100644
 --- a/examples/simple_repeater/MyMesh.cpp
 +++ b/examples/simple_repeater/MyMesh.cpp
 @@ -258,6 +258,11 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
@@ -8,7 +8,7 @@ index 24e8894..7f226c5 100644
  
 +#ifdef MOTION_TELEMETRY_ENABLED
 +    int motion_val = analogRead(MOTION_TELEM_PIN);
-+    telemetry.addPresence(TELEM_CHANNEL_SELF, motion_val >= MOTION_TELEM_THRESHOLD ? 1 : 0);
++    telemetry.addAnalogInput(TELEM_CHANNEL_SELF, (float)motion_val);
 +#endif
 +
      uint8_t tlen = telemetry.getSize();
