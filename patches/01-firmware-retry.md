@@ -57,8 +57,8 @@ The iOS app already has `MessageStatus.retrying` with "Retrying X/Y" UI built in
 
 The retry mechanism is designed to avoid spamming the mesh network:
 
-- **DM retries** only fire when the ACK timeout expires, which is calculated from the estimated airtime and path length. The firmware waits the full timeout before each retry — it doesn't flood the network with rapid resends.
-- **Group retries** are spaced 10 seconds apart (configurable via `MESH_GROUP_RETRY_INTERVAL`), giving the network time to propagate each attempt.
+- **DM retries** only fire when the ACK timeout expires, which is calculated from the estimated airtime and path length. The firmware waits the full timeout before each retry — it doesn't flood the network with rapid resends. A gradual backoff increases the interval over time: the first 5 retries use the calculated ACK timeout (~4s), retries 6–20 use 3x that (~13s), and retries 21+ use 6x (~27s). This extends the total retry window from ~15 minutes to ~1.5 hours while conserving battery.
+- **Group retries** start at 10 seconds apart (configurable via `MESH_GROUP_RETRY_INTERVAL`) and use the same gradual backoff: 10s for the first 5, 30s for retries 6–20, 60s for retries 21+.
 - **Echo cancellation** stops group retries as soon as any repeater re-broadcasts the message. In practice, most group messages succeed within the first few retries once a repeater is in range.
 - **ACK cancellation** stops DM retries immediately when any node acknowledges delivery.
 - **Mesh deduplication** is handled at the packet level — each retry produces a unique packet hash (via attempt counter for DMs, nonce byte for groups), so mesh nodes forward it as a new message rather than dropping it as a duplicate.
@@ -71,9 +71,11 @@ All values are compile-time configurable via build flags:
 |------|---------|-------------|
 | `MESH_AUTO_RETRY_MAX` | 200 | Max retries for DMs (0 = disabled) |
 | `MESH_AUTO_GROUP_RETRY_MAX` | 200 | Max retries for group messages (0 = disabled) |
-| `MESH_GROUP_RETRY_INTERVAL` | 10000 | Milliseconds between group retries |
+| `MESH_GROUP_RETRY_INTERVAL` | 10000 | Milliseconds between group retries (base, before backoff) |
+| `MESH_RETRY_BACKOFF_PHASE1` | 5 | Retries 1–N use 1x base interval |
+| `MESH_RETRY_BACKOFF_PHASE2` | 20 | Retries N+1–M use 3x base interval; M+1+ use 6x |
 
-Example: `-DMESH_AUTO_RETRY_MAX=50 -DMESH_AUTO_GROUP_RETRY_MAX=100`
+Example: `-DMESH_AUTO_RETRY_MAX=50 -DMESH_AUTO_GROUP_RETRY_MAX=100 -DMESH_RETRY_BACKOFF_PHASE1=10`
 
 ## Files Modified
 

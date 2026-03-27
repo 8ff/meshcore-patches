@@ -1,5 +1,5 @@
 diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
-index 32e36260..820f8592 100644
+index 32e3626..820f859 100644
 --- a/examples/companion_radio/MyMesh.cpp
 +++ b/examples/companion_radio/MyMesh.cpp
 @@ -118,6 +118,9 @@
@@ -59,7 +59,7 @@ index 32e36260..820f8592 100644
      : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
        _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui) {
 diff --git a/examples/companion_radio/MyMesh.h b/examples/companion_radio/MyMesh.h
-index 4271729b..5dc57df1 100644
+index 4271729..5dc57df 100644
 --- a/examples/companion_radio/MyMesh.h
 +++ b/examples/companion_radio/MyMesh.h
 @@ -149,6 +149,8 @@ protected:
@@ -72,7 +72,7 @@ index 4271729b..5dc57df1 100644
    // DataStoreHost methods
    bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
 diff --git a/src/helpers/BaseChatMesh.cpp b/src/helpers/BaseChatMesh.cpp
-index 33d7edbe..d95dcade 100644
+index 33d7edb..53b8700 100644
 --- a/src/helpers/BaseChatMesh.cpp
 +++ b/src/helpers/BaseChatMesh.cpp
 @@ -16,6 +16,20 @@ void BaseChatMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Pack
@@ -200,10 +200,10 @@ index 33d7edbe..d95dcade 100644
 +
 +        if (_retry.recipient.out_path_len == OUT_PATH_UNKNOWN) {
 +          sendFloodScoped(_retry.recipient, pkt);
-+          txt_send_timeout = futureMillis(calcFloodTimeoutMillisFor(t));
++          txt_send_timeout = futureMillis(retryBackoff(_retry.retry_count, calcFloodTimeoutMillisFor(t)));
 +        } else {
 +          sendDirect(pkt, _retry.recipient.out_path, _retry.recipient.out_path_len);
-+          txt_send_timeout = futureMillis(calcDirectTimeoutMillisFor(t, _retry.recipient.out_path_len));
++          txt_send_timeout = futureMillis(retryBackoff(_retry.retry_count, calcDirectTimeoutMillisFor(t, _retry.recipient.out_path_len)));
 +        }
 +      } else {
 +        // composeMsgPacket failed, stop retrying
@@ -252,7 +252,7 @@ index 33d7edbe..d95dcade 100644
 +      if (pkt) {
 +        pkt->calculatePacketHash(_sent_group_hash);
 +        sendFloodScoped(_group_retry.channel, pkt);
-+        grp_send_timeout = futureMillis(getGroupRetryInterval());
++        grp_send_timeout = futureMillis(retryBackoff(_group_retry.retry_count, getGroupRetryInterval()));
 +      } else {
 +        onAutoRetryAttempt(true, _group_retry.retry_count, getGroupAutoRetryMax(), true);
 +        _has_pending_group_retry = false;
@@ -269,10 +269,10 @@ index 33d7edbe..d95dcade 100644
  
    if (_pendingLoopback) {
 diff --git a/src/helpers/BaseChatMesh.h b/src/helpers/BaseChatMesh.h
-index ab90d581..010ab31c 100644
+index ab90d58..c233cb2 100644
 --- a/src/helpers/BaseChatMesh.h
 +++ b/src/helpers/BaseChatMesh.h
-@@ -15,6 +15,18 @@
+@@ -15,6 +15,27 @@
  #define MSG_SEND_SENT_FLOOD   1
  #define MSG_SEND_SENT_DIRECT  2
  
@@ -288,10 +288,19 @@ index ab90d581..010ab31c 100644
 +  #define MESH_GROUP_RETRY_INTERVAL  10000   // 10 seconds between group message retries
 +#endif
 +
++// Backoff phase thresholds: retries 1..PHASE1 use base interval,
++// PHASE1+1..PHASE2 use 3x base, PHASE2+1.. use 6x base
++#ifndef MESH_RETRY_BACKOFF_PHASE1
++  #define MESH_RETRY_BACKOFF_PHASE1  5
++#endif
++#ifndef MESH_RETRY_BACKOFF_PHASE2
++  #define MESH_RETRY_BACKOFF_PHASE2  20
++#endif
++
  #define REQ_TYPE_GET_STATUS      0x01   // same as _GET_STATS
  #define REQ_TYPE_KEEP_ALIVE      0x02
  
-@@ -71,6 +83,30 @@ class BaseChatMesh : public mesh::Mesh {
+@@ -71,6 +92,30 @@ class BaseChatMesh : public mesh::Mesh {
    uint8_t temp_buf[MAX_TRANS_UNIT];
    ConnectionInfo connections[MAX_CONNECTIONS];
  
@@ -322,7 +331,7 @@ index ab90d581..010ab31c 100644
    mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
    void sendAckTo(const ContactInfo& dest, uint32_t ack_hash);
  
-@@ -85,6 +121,10 @@ protected:
+@@ -85,6 +130,10 @@ protected:
    #endif
      txt_send_timeout = 0;
      _pendingLoopback = NULL;
@@ -333,7 +342,7 @@ index ab90d581..010ab31c 100644
      memset(connections, 0, sizeof(connections));
    }
  
-@@ -100,6 +140,11 @@ protected:
+@@ -100,6 +149,18 @@ protected:
    virtual bool shouldOverwriteWhenFull() const { return false; }
    virtual uint8_t getAutoAddMaxHops() const { return 0; }  // 0 = no limit, 1 = direct (0 hops), N = up to N-1 hops
    virtual void onContactOverwrite(const uint8_t* pub_key) {};
@@ -342,10 +351,17 @@ index ab90d581..010ab31c 100644
 +  virtual uint32_t getGroupRetryInterval() const { return MESH_GROUP_RETRY_INTERVAL; }  // milliseconds between group retries
 +  virtual void onAutoRetryAttempt(bool is_group, uint16_t retry_count, uint16_t max_retries, bool is_final) {}
 +  virtual void onRetryAckReceived(const ContactInfo& recipient, uint16_t retry_count) {}
++
++  // Gradual backoff: phase1 = 1x, phase2 = 3x, phase3 = 6x base interval
++  uint32_t retryBackoff(uint16_t retry_count, uint32_t base_interval) const {
++    if (retry_count <= MESH_RETRY_BACKOFF_PHASE1) return base_interval;
++    if (retry_count <= MESH_RETRY_BACKOFF_PHASE2) return base_interval * 3;
++    return base_interval * 6;
++  }
    virtual void onDiscoveredContact(ContactInfo& contact, bool is_new, uint8_t path_len, const uint8_t* path) = 0;
    virtual ContactInfo* processAck(const uint8_t *data) = 0;
    virtual void onContactPathUpdated(const ContactInfo& contact) = 0;
-@@ -129,6 +174,7 @@ protected:
+@@ -129,6 +190,7 @@ protected:
    void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
    bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
    void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;
