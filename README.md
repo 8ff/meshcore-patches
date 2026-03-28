@@ -14,10 +14,9 @@
 | # | Patch | Role | Description | Docs |
 |---|-------|------|-------------|------|
 | 01 | [firmware-retry](patches/01-firmware-retry.patch) | Companion | Keeps retrying DM and group messages in the background until they go through | [Details](patches/01-firmware-retry.md) |
-| 02 | [motion-alert](patches/02-motion-alert.patch) | Repeater | Sends a group message to a private channel when motion is detected on AIN1 | [Details](patches/02-motion-alert.md) |
-| 03 | [motion-telemetry](patches/03-motion-telemetry.patch) | Repeater | Reports motion state (HIGH/LOW) as CayenneLPP presence in telemetry responses | [Details](patches/03-motion-telemetry.md) |
+| 02 | [motion-detect](patches/02-motion-detect.patch) | Repeater | Motion detection via nRF52840 LPCOMP — sends channel alert + reports telemetry presence | [Details](patches/02-motion-detect.md) |
 
-All patches are independent and can be combined freely.
+Both patches are independent and can be combined.
 
 ---
 
@@ -61,12 +60,12 @@ Pre-built firmware for all supported boards is available on the [**Releases**](.
 ```bash
 git clone https://github.com/meshcore-dev/MeshCore
 cd MeshCore
-git checkout companion-v1.14.1  # or any release tag
+git checkout repeater-v1.14.1  # or any release tag
 
 # Apply whichever patches you need
 git apply /path/to/patches/01-firmware-retry.patch
-git apply /path/to/patches/03-motion-telemetry.patch
+git apply /path/to/patches/02-motion-detect.patch
 
-# For patches 02/03, add build flags to your PlatformIO env or export:
-export PLATFORMIO_BUILD_FLAGS="-DMOTION_TELEMETRY_ENABLED"
+# For patch 02, add the build flag:
+export PLATFORMIO_BUILD_FLAGS="-DMOTION_DETECT_ENABLED"
 ```
