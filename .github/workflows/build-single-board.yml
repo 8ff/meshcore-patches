@@ -115,12 +115,8 @@ on:
         description: 'Patch 01: DM/group auto-retry'
         type: boolean
         default: true
-      patch_motion_alert:
-        description: 'Patch 02: Motion alert (channel broadcast)'
-        type: boolean
-        default: false
-      patch_motion_telemetry:
-        description: 'Patch 03: Motion telemetry (presence)'
+      patch_motion_detect:
+        description: 'Patch 02: Motion detect (LPCOMP + channel alert + telemetry)'
         type: boolean
         default: false
 
@@ -171,8 +167,7 @@ jobs:
         working-directory: firmware
         env:
           PATCH_01: ${{ inputs.patch_firmware_retry }}
-          PATCH_02: ${{ inputs.patch_motion_alert }}
-          PATCH_03: ${{ inputs.patch_motion_telemetry }}
+          PATCH_02: ${{ inputs.patch_motion_detect }}
         run: |
           APPLIED=""
           if [ "$PATCH_01" == "true" ]; then
@@ -180,12 +175,8 @@ jobs:
             APPLIED="${APPLIED}01-firmware-retry "
           fi
           if [ "$PATCH_02" == "true" ]; then
-            git apply ../patches-repo/patches/02-motion-alert.patch
-            APPLIED="${APPLIED}02-motion-alert "
-          fi
-          if [ "$PATCH_03" == "true" ]; then
-            git apply ../patches-repo/patches/03-motion-telemetry.patch
-            APPLIED="${APPLIED}03-motion-telemetry "
+            git apply ../patches-repo/patches/02-motion-detect.patch
+            APPLIED="${APPLIED}02-motion-detect "
           fi
           if [ -z "$APPLIED" ]; then
             echo "::warning::No patches selected"
@@ -195,15 +186,11 @@ jobs:
 
       - name: Set patch build flags
         env:
-          PATCH_02: ${{ inputs.patch_motion_alert }}
-          PATCH_03: ${{ inputs.patch_motion_telemetry }}
+          PATCH_02: ${{ inputs.patch_motion_detect }}
         run: |
           FLAGS=""
           if [ "$PATCH_02" == "true" ]; then
-            FLAGS="$FLAGS -DMOTION_ALERT_ENABLED"
-          fi
-          if [ "$PATCH_03" == "true" ]; then
-            FLAGS="$FLAGS -DMOTION_TELEMETRY_ENABLED"
+            FLAGS="$FLAGS -DMOTION_DETECT_ENABLED"
           fi
           if [ -n "$FLAGS" ]; then
             echo "PLATFORMIO_BUILD_FLAGS=$FLAGS" >> "$GITHUB_ENV"
