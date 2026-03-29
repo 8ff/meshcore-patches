@@ -1,0 +1,182 @@
+diff --git a/examples/simple_repeater/MyMesh.cpp b/examples/simple_repeater/MyMesh.cpp
+index 24e88949..a6eed6aa 100644
+--- a/examples/simple_repeater/MyMesh.cpp
++++ b/examples/simple_repeater/MyMesh.cpp
+@@ -258,6 +258,10 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
+       telemetry.addTemperature(TELEM_CHANNEL_SELF, temperature); // Built-in MCU Temperature
+     }
+ 
++#ifdef MOTION_DETECT_ENABLED
++    telemetry.addPresence(TELEM_CHANNEL_SELF, _motion_on ? 1 : 0);
++#endif
++
+     uint8_t tlen = telemetry.getSize();
+     memcpy(&reply_data[4], telemetry.getBuffer(), tlen);
+     return 4 + tlen; // reply_len
+@@ -928,6 +932,11 @@ void MyMesh::begin(FILESYSTEM *fs) {
+ 
+   board.setAdcMultiplier(_prefs.adc_multiplier);
+ 
++#ifdef MOTION_DETECT_ENABLED
++  initMotionDetect();
++  initMotionChannel();
++#endif
++
+ #if ENV_INCLUDE_GPS == 1
+   applyGpsPrefs();
+ #endif
+@@ -1297,6 +1306,10 @@ void MyMesh::loop() {
+ 
+   mesh::Mesh::loop();
+ 
++#ifdef MOTION_DETECT_ENABLED
++  checkMotionState();
++#endif
++
+   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
+     mesh::Packet *pkt = createSelfAdvert();
+     uint32_t delay_millis = 0;
+@@ -1335,6 +1348,92 @@ void MyMesh::loop() {
+   last_millis = now;
+ }
+ 
++#ifdef MOTION_DETECT_ENABLED
++// LPCOMP ISR — fires on threshold crossing, just records timestamp for debounce
++static volatile unsigned long _lpcomp_last_irq = 0;
++extern "C" void LPCOMP_IRQHandler(void) {
++  if (NRF_LPCOMP->EVENTS_CROSS) {
++    NRF_LPCOMP->EVENTS_CROSS = 0;
++    _lpcomp_last_irq = millis();
++  }
++  if (NRF_LPCOMP->EVENTS_DOWN) NRF_LPCOMP->EVENTS_DOWN = 0;
++  if (NRF_LPCOMP->EVENTS_UP) NRF_LPCOMP->EVENTS_UP = 0;
++}
++
++void MyMesh::initMotionDetect() {
++  NRF_LPCOMP->ENABLE = LPCOMP_ENABLE_ENABLE_Disabled;
++  NRF_LPCOMP->PSEL = MOTION_LPCOMP_AIN;
++  NRF_LPCOMP->REFSEL = LPCOMP_REFSEL_REFSEL_SupplyTwoEighthsPrescaling;  // VDD*2/8 ~825mV
++  NRF_LPCOMP->ANADETECT = LPCOMP_ANADETECT_ANADETECT_Cross;
++  NRF_LPCOMP->HYST = LPCOMP_HYST_HYST_Hyst50mV;
++  NRF_LPCOMP->INTENSET = LPCOMP_INTENSET_CROSS_Msk;
++  NRF_LPCOMP->ENABLE = LPCOMP_ENABLE_ENABLE_Enabled;
++  NRF_LPCOMP->TASKS_START = 1;
++  NVIC_SetPriority(LPCOMP_IRQn, 6);
++  NVIC_ClearPendingIRQ(LPCOMP_IRQn);
++  NVIC_EnableIRQ(LPCOMP_IRQn);
++
++  // Read initial state: RESULT 0=below ref (motion on), 1=above ref (idle)
++  NRF_LPCOMP->TASKS_SAMPLE = 1;
++  while (!NRF_LPCOMP->EVENTS_READY) {}
++  NRF_LPCOMP->EVENTS_READY = 0;
++  _motion_on = (NRF_LPCOMP->RESULT == 0);
++  _motion_prev = _motion_on;
++  _motion_last_change = 0;
++  _motion_cooldown = 0;
++  MESH_DEBUG_PRINTLN("Motion detect: LPCOMP AIN%d, ref=VDD*2/8, debounce=%dms, initial=%s",
++                     MOTION_LPCOMP_AIN, MOTION_DEBOUNCE_MS, _motion_on ? "ON" : "OFF");
++}
++
++void MyMesh::initMotionChannel() {
++  const uint8_t key[] = MOTION_CHANNEL_KEY;
++  memset(_motion_channel.secret, 0, PUB_KEY_SIZE);
++  memcpy(_motion_channel.secret, key, 16);
++  mesh::Utils::sha256(_motion_channel.hash, PATH_HASH_SIZE, _motion_channel.secret, 16);
++  MESH_DEBUG_PRINTLN("Motion channel: %s", MOTION_CHANNEL_NAME);
++}
++
++void MyMesh::sendMotionAlert() {
++  uint32_t timestamp = getRTCClock()->getCurrentTime();
++  uint8_t temp[5 + 80];
++  memcpy(temp, &timestamp, 4);
++  temp[4] = TXT_TYPE_PLAIN;
++  char msg[64];
++  snprintf(msg, sizeof(msg), "%s: Motion detected", _prefs.node_name);
++  int msg_len = strlen(msg);
++  memcpy(&temp[5], msg, msg_len);
++
++  auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, _motion_channel, temp, 5 + msg_len);
++  if (pkt) {
++    sendFlood(pkt);
++    MESH_DEBUG_PRINTLN("Motion alert sent to %s", MOTION_CHANNEL_NAME);
++  }
++}
++
++void MyMesh::checkMotionState() {
++  NRF_LPCOMP->TASKS_SAMPLE = 1;
++  bool current = (NRF_LPCOMP->RESULT == 0);  // 0=below ref=motion on
++
++  // Debounce: only accept change if stable for MOTION_DEBOUNCE_MS since last IRQ
++  if (current != _motion_on) {
++    unsigned long last_irq = _lpcomp_last_irq;
++    if (millis() - last_irq >= MOTION_DEBOUNCE_MS) {
++      _motion_prev = _motion_on;
++      _motion_on = current;
++      _motion_last_change = millis();
++
++      // Send alert on rising edge (OFF -> ON) with cooldown
++      if (_motion_on && !_motion_prev) {
++        if (!_motion_cooldown || millisHasNowPassed(_motion_cooldown)) {
++          sendMotionAlert();
++          _motion_cooldown = futureMillis(MOTION_COOLDOWN_MS);
++        }
++      }
++    }
++  }
++}
++#endif
++
+ // To check if there is pending work
+ bool MyMesh::hasPendingWork() const {
+ #if defined(WITH_BRIDGE)
+diff --git a/examples/simple_repeater/MyMesh.h b/examples/simple_repeater/MyMesh.h
+index 92958448..7fe7ddf1 100644
+--- a/examples/simple_repeater/MyMesh.h
++++ b/examples/simple_repeater/MyMesh.h
+@@ -35,6 +35,27 @@
+ #include <helpers/RegionMap.h>
+ #include "RateLimiter.h"
+ 
++// --- Motion detection config ---
++#ifdef MOTION_DETECT_ENABLED
++  #include <nrf_lpcomp.h>
++  #ifndef MOTION_LPCOMP_AIN
++    #define MOTION_LPCOMP_AIN 7  // AIN7 = P0.31 = WB_A1
++  #endif
++  #ifndef MOTION_DEBOUNCE_MS
++    #define MOTION_DEBOUNCE_MS 500
++  #endif
++  #ifndef MOTION_COOLDOWN_MS
++    #define MOTION_COOLDOWN_MS 60000  // 60s cooldown between alerts
++  #endif
++  #ifndef MOTION_CHANNEL_NAME
++    #define MOTION_CHANNEL_NAME "fudge"
++  #endif
++  #ifndef MOTION_CHANNEL_KEY
++    #define MOTION_CHANNEL_KEY { 0x3d, 0xb6, 0x96, 0x3c, 0xfd, 0x7d, 0x18, 0x21, 0x66, 0xc9, 0xab, 0x7f, 0x3e, 0x91, 0x87, 0x50 }
++  #endif
++#endif
++// --- End motion detection config ---
++
+ #ifdef WITH_BRIDGE
+ extern AbstractBridge* bridge;
+ #endif
+@@ -118,6 +139,18 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
+   ESPNowBridge bridge;
+ #endif
+ 
++#ifdef MOTION_DETECT_ENABLED
++  bool _motion_on;
++  bool _motion_prev;
++  unsigned long _motion_last_change;
++  mesh::GroupChannel _motion_channel;
++  unsigned long _motion_cooldown;
++  void initMotionDetect();
++  void initMotionChannel();
++  void checkMotionState();
++  void sendMotionAlert();
++#endif
++
+   void putNeighbour(const mesh::Identity& id, uint32_t timestamp, float snr);
+   void sendNodeDiscoverReq();
+   uint8_t handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data, bool is_flood);
