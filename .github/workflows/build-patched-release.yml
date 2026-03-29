@@ -27,6 +27,10 @@ on:
         description: 'Patch 02: Motion detect (LPCOMP + channel alert + telemetry)'
         type: boolean
         default: false
+      patch_config_cli:
+        description: 'Patch 03: Config channel CLI'
+        type: boolean
+        default: false
 
 jobs:
 
@@ -76,6 +80,7 @@ jobs:
         env:
           PATCH_01: ${{ inputs.patch_firmware_retry }}
           PATCH_02: ${{ inputs.patch_motion_detect }}
+          PATCH_03: ${{ inputs.patch_config_cli }}
         run: |
           APPLIED=""
           if [ "$PATCH_01" == "true" ]; then
@@ -86,6 +91,10 @@ jobs:
             git apply ../patches-repo/patches/02-motion-detect.patch
             APPLIED="${APPLIED}02-motion-detect "
           fi
+          if [ "$PATCH_03" == "true" ]; then
+            git apply ../patches-repo/patches/03-config-cli.patch
+            APPLIED="${APPLIED}03-config-cli "
+          fi
           if [ -z "$APPLIED" ]; then
             echo "::warning::No patches selected"
           else
@@ -95,10 +104,14 @@ jobs:
       - name: Set patch build flags
         env:
           PATCH_02: ${{ inputs.patch_motion_detect }}
+          PATCH_03: ${{ inputs.patch_config_cli }}
         run: |
           FLAGS=""
           if [ "$PATCH_02" == "true" ]; then
             FLAGS="$FLAGS -DMOTION_DETECT_ENABLED"
+          fi
+          if [ "$PATCH_03" == "true" ]; then
+            FLAGS="$FLAGS -DCONFIG_CLI_ENABLED"
           fi
           if [ -n "$FLAGS" ]; then
             echo "PLATFORMIO_BUILD_FLAGS=$FLAGS" >> "$GITHUB_ENV"
@@ -127,6 +140,7 @@ jobs:
         env:
           PATCH_01: ${{ inputs.patch_firmware_retry }}
           PATCH_02: ${{ inputs.patch_motion_detect }}
+          PATCH_03: ${{ inputs.patch_config_cli }}
           RESOLVED_TAG: ${{ steps.resolve.outputs.tag }}
           BUILD_ROLE: ${{ inputs.role }}
         run: |
@@ -139,7 +153,8 @@ jobs:
             echo "**Patches applied:**"
             [ "$PATCH_01" == "true" ] && echo "- 01: DM/group auto-retry"
             [ "$PATCH_02" == "true" ] && echo "- 02: Motion detect (LPCOMP + alert + telemetry)"
-            if [ "$PATCH_01" != "true" ] && [ "$PATCH_02" != "true" ]; then
+            [ "$PATCH_03" == "true" ] && echo "- 03: Config channel CLI"
+            if [ "$PATCH_01" != "true" ] && [ "$PATCH_02" != "true" ] && [ "$PATCH_03" != "true" ]; then
               echo "- (none)"
             fi
             echo "EOFBODY"

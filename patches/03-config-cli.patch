@@ -1,0 +1,563 @@
+diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
+index 32e3626..3a8943f 100644
+--- a/examples/companion_radio/MyMesh.cpp
++++ b/examples/companion_radio/MyMesh.cpp
+@@ -801,6 +801,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
+   _iter_started = false;
+   _cli_rescue = false;
+   offline_queue_len = 0;
++#ifdef CONFIG_CLI_ENABLED
++  _config_channel_idx = -1;
++  _cfg_reboot_at = 0;
++#endif
+   app_target_ver = 0;
+   clearPendingReqs();
+   next_ack_idx = 0;
+@@ -892,6 +896,10 @@ void MyMesh::begin(bool has_display) {
+   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+   _store->loadChannels(this);
+ 
++#ifdef CONFIG_CLI_ENABLED
++  initConfigChannel();
++#endif
++
+   radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+   radio_set_tx_power(_prefs.tx_power_dbm);
+   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
+@@ -1053,12 +1061,22 @@ void MyMesh::handleCmdFrame(size_t len) {
+     if (txt_type != TXT_TYPE_PLAIN) {
+       writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
+     } else {
+-      ChannelDetails channel;
+-      bool success = getChannel(channel_idx, channel);
+-      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
++#ifdef CONFIG_CLI_ENABLED
++      if (isConfigChannel(channel_idx)) {
++        MESH_DEBUG_PRINTLN("ConfigCLI: intercepted msg on config channel, len=%d", len - i);
++        cmd_frame[len] = 0;  // ensure null terminated
++        handleConfigChannelMsg(text, len - i);
+         writeOKFrame();
+-      } else {
+-        writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
++      } else
++#endif
++      {
++        ChannelDetails channel;
++        bool success = getChannel(channel_idx, channel);
++        if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
++          writeOKFrame();
++        } else {
++          writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
++        }
+       }
+     }
+   } else if (cmd_frame[0] == CMD_GET_CONTACTS) { // get Contact list
+@@ -2045,11 +2063,159 @@ void MyMesh::loop() {
+     dirty_contacts_expiry = 0;
+   }
+ 
++#ifdef CONFIG_CLI_ENABLED
++  // Deferred reboot: gives time for reply to be sent to app
++  if (_cfg_reboot_at && millisHasNowPassed(_cfg_reboot_at)) {
++    MESH_DEBUG_PRINTLN("ConfigCLI: executing deferred reboot");
++    board.reboot();
++  }
++#endif
++
+ #ifdef DISPLAY_CLASS
+   if (_ui) _ui->setHasConnection(_serial->isConnected());
+ #endif
+ }
+ 
++#ifdef CONFIG_CLI_ENABLED
++
++void MyMesh::initConfigChannel() {
++  // Check if config channel already exists (loaded from flash on previous boot)
++  for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
++    ChannelDetails cd;
++    if (getChannel(i, cd) && strcmp(cd.name, CONFIG_CHANNEL_NAME) == 0) {
++      _config_channel_idx = i;
++      MESH_DEBUG_PRINTLN("ConfigCLI: found existing config channel at idx=%d", i);
++      return;
++    }
++  }
++
++  // Not found — add it
++  auto ch = addChannel(CONFIG_CHANNEL_NAME, CONFIG_CHANNEL_PSK);
++  if (ch) {
++    _config_channel_idx = findChannelIdx(ch->channel);
++    MESH_DEBUG_PRINTLN("ConfigCLI: created config channel at idx=%d", _config_channel_idx);
++  } else {
++    _config_channel_idx = -1;
++    MESH_DEBUG_PRINTLN("ConfigCLI: ERROR failed to create config channel (channels full?)");
++  }
++}
++
++void MyMesh::handleConfigChannelMsg(const char* text, int text_len) {
++  ConfigCLIParams params;
++  fillConfigParams(params);
++
++  int rlen = configCLI_handleCommand(text, _cli_reply_buf, sizeof(_cli_reply_buf) - 1,
++                                     &params, &_cli_actions);
++  if (rlen > 0) {
++    _cli_reply_buf[rlen] = 0;
++    MESH_DEBUG_PRINTLN("ConfigCLI: reply len=%d", rlen);
++    pushConfigChannelReply(_cli_reply_buf);
++  } else {
++    MESH_DEBUG_PRINTLN("ConfigCLI: no reply for cmd");
++  }
++}
++
++void MyMesh::fillConfigParams(ConfigCLIParams& params) {
++  memset(&params, 0, sizeof(params));
++  params.node_name      = _prefs.node_name;
++  params.node_name_max  = sizeof(_prefs.node_name);
++  params.freq           = &_prefs.freq;
++  params.bw             = &_prefs.bw;
++  params.sf             = &_prefs.sf;
++  params.cr             = &_prefs.cr;
++  params.tx_power_dbm   = &_prefs.tx_power_dbm;
++  params.airtime_factor = &_prefs.airtime_factor;
++  params.client_repeat  = &_prefs.client_repeat;
++  params.batt_mv        = board.getBattMilliVolts();
++  params.uptime_secs    = millis() / 1000;
++  params.num_contacts   = getNumContacts();
++  params.free_queue     = _mgr->getFreeCount();
++  params.total_queue    = _mgr->getOutboundTotal();
++  params.total_air_secs = getTotalAirTime() / 1000;
++  params.rx_air_secs    = getReceiveAirTime() / 1000;
++  params.n_sent_flood   = getNumSentFlood();
++  params.n_sent_direct  = getNumSentDirect();
++  params.n_recv_flood   = getNumRecvFlood();
++  params.n_recv_direct  = getNumRecvDirect();
++  params.firmware_ver   = FIRMWARE_VERSION;
++  params.build_date     = FIRMWARE_BUILD_DATE;
++
++  _cli_actions.save_prefs  = _cfgSavePrefs;
++  _cli_actions.send_advert = _cfgSendAdvert;
++  _cli_actions.do_reboot   = _cfgReboot;
++  _cli_actions.ctx         = this;
++}
++
++void MyMesh::pushConfigChannelReply(const char* reply) {
++  int i = 0;
++  if (app_target_ver >= 3) {
++    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
++    out_frame[i++] = 0;  // SNR (n/a for local)
++    out_frame[i++] = 0;  // reserved
++    out_frame[i++] = 0;  // reserved
++  } else {
++    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
++  }
++  out_frame[i++] = (uint8_t)_config_channel_idx;
++  out_frame[i++] = 0xFF;           // path_len = 0xFF means "direct"
++  out_frame[i++] = TXT_TYPE_PLAIN;
++  uint32_t now = getRTCClock()->getCurrentTime();
++  memcpy(&out_frame[i], &now, 4); i += 4;
++
++  // Prepend "config: " so it appears as a message from "config" in the channel
++  const char* prefix = CONFIG_CHANNEL_NAME ": ";
++  int plen = strlen(prefix);
++  if (i + plen < MAX_FRAME_SIZE) {
++    memcpy(&out_frame[i], prefix, plen); i += plen;
++  }
++
++  int tlen = strlen(reply);
++  if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
++  memcpy(&out_frame[i], reply, tlen); i += tlen;
++
++  addToOfflineQueue(out_frame, i);
++
++  if (_serial->isConnected()) {
++    uint8_t tickle[1] = { PUSH_CODE_MSG_WAITING };
++    _serial->writeFrame(tickle, 1);
++  }
++
++  MESH_DEBUG_PRINTLN("ConfigCLI: queued reply frame, len=%d", i);
++}
++
++void MyMesh::_cfgSavePrefs(void* ctx) {
++  ((MyMesh*)ctx)->savePrefs();
++  MESH_DEBUG_PRINTLN("ConfigCLI: prefs saved");
++}
++
++void MyMesh::_cfgSendAdvert(void* ctx, bool flood) {
++  auto m = (MyMesh*)ctx;
++  mesh::Packet* pkt;
++  if (m->_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
++    pkt = m->createSelfAdvert(m->_prefs.node_name);
++  } else {
++    pkt = m->createSelfAdvert(m->_prefs.node_name, sensors.node_lat, sensors.node_lon);
++  }
++  if (pkt) {
++    if (flood) {
++      m->sendFlood(pkt, 0, m->_prefs.path_hash_mode + 1);
++    } else {
++      m->sendZeroHop(pkt);
++    }
++    MESH_DEBUG_PRINTLN("ConfigCLI: advert sent (flood=%d)", (int)flood);
++  } else {
++    MESH_DEBUG_PRINTLN("ConfigCLI: ERROR failed to create advert packet");
++  }
++}
++
++void MyMesh::_cfgReboot(void* ctx) {
++  auto m = (MyMesh*)ctx;
++  m->_cfg_reboot_at = millis() + 500;  // reboot in 500ms, after reply is delivered
++  MESH_DEBUG_PRINTLN("ConfigCLI: reboot scheduled in 500ms");
++}
++
++#endif // CONFIG_CLI_ENABLED
++
+ bool MyMesh::advert() {
+   mesh::Packet* pkt;
+   if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
+diff --git a/examples/companion_radio/MyMesh.h b/examples/companion_radio/MyMesh.h
+index 4271729..b8b6d98 100644
+--- a/examples/companion_radio/MyMesh.h
++++ b/examples/companion_radio/MyMesh.h
+@@ -70,6 +70,17 @@
+ #include <helpers/BaseChatMesh.h>
+ #include <helpers/TransportKeyStore.h>
+ 
++#ifdef CONFIG_CLI_ENABLED
++#include <helpers/ConfigCLI.h>
++
++#ifndef CONFIG_CHANNEL_NAME
++  #define CONFIG_CHANNEL_NAME "config"
++#endif
++#ifndef CONFIG_CHANNEL_PSK
++  #define CONFIG_CHANNEL_PSK "AAAAAAAAAAAAAAAAAAAAAA=="  // static 16 zero bytes base64, replace later
++#endif
++#endif
++
+ /* -------------------------------------------------------------------------------------- */
+ 
+ #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
+@@ -233,6 +244,23 @@ private:
+ 
+   #define ADVERT_PATH_TABLE_SIZE   16
+   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
++
++#ifdef CONFIG_CLI_ENABLED
++  int _config_channel_idx;
++  unsigned long _cfg_reboot_at;   // 0 = no pending reboot, else millis() timestamp
++  ConfigCLIActions _cli_actions;
++  char _cli_reply_buf[MAX_FRAME_SIZE];
++
++  void initConfigChannel();
++  bool isConfigChannel(uint8_t channel_idx) const { return _config_channel_idx >= 0 && channel_idx == _config_channel_idx; }
++  void handleConfigChannelMsg(const char* text, int text_len);
++  void pushConfigChannelReply(const char* reply);
++  void fillConfigParams(ConfigCLIParams& params);
++
++  static void _cfgSavePrefs(void* ctx);
++  static void _cfgSendAdvert(void* ctx, bool flood);
++  static void _cfgReboot(void* ctx);
++#endif
+ };
+ 
+ extern MyMesh the_mesh;
+diff --git a/platformio.ini b/platformio.ini
+index ba601c2..66828c8 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -50,6 +50,7 @@ build_src_filter =
+   +<helpers/radiolib/*.cpp>
+   +<helpers/bridges/BridgeBase.cpp>
+   +<helpers/ui/MomentaryButton.cpp>
++  +<helpers/ConfigCLI.cpp>
+ 
+ ; ----------------- ESP32 ---------------------
+ 
+diff --git a/src/helpers/ConfigCLI.cpp b/src/helpers/ConfigCLI.cpp
+new file mode 100644
+index 0000000..85913ab
+--- /dev/null
++++ b/src/helpers/ConfigCLI.cpp
+@@ -0,0 +1,230 @@
++#ifdef CONFIG_CLI_ENABLED
++
++#include "ConfigCLI.h"
++#include <string.h>
++#include <stdio.h>
++#include <MeshCore.h>  // for MESH_DEBUG_PRINTLN
++
++// Believe it or not, this std C function is busted on some platforms!
++static uint32_t _cfg_atoi(const char* sp) {
++  uint32_t n = 0;
++  while (*sp && *sp >= '0' && *sp <= '9') {
++    n *= 10;
++    n += (*sp++ - '0');
++  }
++  return n;
++}
++
++static float _cfg_atof(const char* sp) {
++  float result = 0.0f;
++  float sign = 1.0f;
++  if (*sp == '-') { sign = -1.0f; sp++; }
++
++  while (*sp >= '0' && *sp <= '9') {
++    result = result * 10.0f + (*sp++ - '0');
++  }
++  if (*sp == '.') {
++    sp++;
++    float frac = 0.1f;
++    while (*sp >= '0' && *sp <= '9') {
++      result += (*sp++ - '0') * frac;
++      frac *= 0.1f;
++    }
++  }
++  return result * sign;
++}
++
++// Skip leading whitespace
++static const char* _skip_ws(const char* s) {
++  while (*s == ' ' || *s == '\t') s++;
++  return s;
++}
++
++static void _format_uptime(char* buf, int max_len, uint32_t secs) {
++  uint32_t d = secs / 86400;
++  uint32_t h = (secs % 86400) / 3600;
++  uint32_t m = (secs % 3600) / 60;
++  if (d > 0) {
++    snprintf(buf, max_len, "%lud%luh%lum", (unsigned long)d, (unsigned long)h, (unsigned long)m);
++  } else if (h > 0) {
++    snprintf(buf, max_len, "%luh%lum", (unsigned long)h, (unsigned long)m);
++  } else {
++    snprintf(buf, max_len, "%lum", (unsigned long)m);
++  }
++}
++
++int configCLI_handleCommand(const char* cmd, char* reply, int max_len,
++                            ConfigCLIParams* params, ConfigCLIActions* actions) {
++  cmd = _skip_ws(cmd);
++  int len = strlen(cmd);
++
++  // Strip trailing whitespace/CR/LF
++  while (len > 0 && (cmd[len-1] == ' ' || cmd[len-1] == '\r' || cmd[len-1] == '\n' || cmd[len-1] == 0)) {
++    len--;
++  }
++  if (len == 0) return 0;  // empty command
++
++  MESH_DEBUG_PRINTLN("ConfigCLI: cmd='%.*s' len=%d", len, cmd, len);
++
++  // --- help ---
++  if (len == 4 && memcmp(cmd, "help", 4) == 0) {
++    return snprintf(reply, max_len,
++      "Commands: help, status, get config, "
++      "set name/freq/bw/sf/cr/power%s, "
++      "advert [flood], reboot",
++      params->client_repeat ? "/repeat" : "");
++  }
++
++  // --- status ---
++  if (len == 6 && memcmp(cmd, "status", 6) == 0) {
++    char uptime_buf[24];
++    _format_uptime(uptime_buf, sizeof(uptime_buf), params->uptime_secs);
++    return snprintf(reply, max_len,
++      "Batt: %umV  Up: %s  Air: %lus tx/%lus rx  "
++      "Pkts: %lu/%lu F %lu/%lu D  "
++      "Queue: %d/%d  Contacts: %d",
++      (unsigned)params->batt_mv, uptime_buf,
++      (unsigned long)params->total_air_secs, (unsigned long)params->rx_air_secs,
++      (unsigned long)params->n_sent_flood, (unsigned long)params->n_recv_flood,
++      (unsigned long)params->n_sent_direct, (unsigned long)params->n_recv_direct,
++      params->free_queue, params->total_queue, params->num_contacts);
++  }
++
++  // --- get config ---
++  if (len == 10 && memcmp(cmd, "get config", 10) == 0) {
++    int n = snprintf(reply, max_len,
++      "Name: %s  Freq: %.3f  BW: %.1f  SF: %u  CR: %u  "
++      "Power: %ddBm  Airtime: %.1f",
++      params->node_name,
++      (double)*params->freq, (double)*params->bw,
++      (unsigned)*params->sf, (unsigned)*params->cr,
++      (int)*params->tx_power_dbm, (double)*params->airtime_factor);
++    if (params->client_repeat && n < max_len - 20) {
++      n += snprintf(reply + n, max_len - n, "  Repeat: %s",
++                    *params->client_repeat ? "on" : "off");
++    }
++    if (n < max_len - 30) {
++      n += snprintf(reply + n, max_len - n, "  FW: %s (%s)",
++                    params->firmware_ver ? params->firmware_ver : "?",
++                    params->build_date ? params->build_date : "?");
++    }
++    return n;
++  }
++
++  // --- set commands ---
++  if (len > 4 && memcmp(cmd, "set ", 4) == 0) {
++    const char* arg = cmd + 4;
++    int arg_len = len - 4;
++
++    // set name <X>
++    if (arg_len > 5 && memcmp(arg, "name ", 5) == 0) {
++      const char* val = _skip_ws(arg + 5);
++      if (*val == 0) return snprintf(reply, max_len, "ERR name cannot be empty");
++      int nlen = strlen(val);
++      if (nlen >= params->node_name_max) nlen = params->node_name_max - 1;
++      memcpy(params->node_name, val, nlen);
++      params->node_name[nlen] = 0;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set name='%s'", params->node_name);
++      return snprintf(reply, max_len, "OK name=%s", params->node_name);
++    }
++
++    // set freq <X>
++    if (arg_len > 5 && memcmp(arg, "freq ", 5) == 0) {
++      float v = _cfg_atof(_skip_ws(arg + 5));
++      if (v < 400.0f || v > 2500.0f) return snprintf(reply, max_len, "ERR freq range 400-2500");
++      *params->freq = v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set freq=%.3f", (double)v);
++      return snprintf(reply, max_len, "OK freq=%.3f", (double)*params->freq);
++    }
++
++    // set bw <X>
++    if (arg_len > 3 && memcmp(arg, "bw ", 3) == 0) {
++      float v = _cfg_atof(_skip_ws(arg + 3));
++      if (v < 7.8f || v > 500.0f) return snprintf(reply, max_len, "ERR bw range 7.8-500");
++      *params->bw = v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set bw=%.1f", (double)v);
++      return snprintf(reply, max_len, "OK bw=%.1f", (double)*params->bw);
++    }
++
++    // set sf <X>
++    if (arg_len > 3 && memcmp(arg, "sf ", 3) == 0) {
++      uint32_t v = _cfg_atoi(_skip_ws(arg + 3));
++      if (v < 5 || v > 12) return snprintf(reply, max_len, "ERR sf range 5-12");
++      *params->sf = (uint8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set sf=%u", (unsigned)v);
++      return snprintf(reply, max_len, "OK sf=%u", (unsigned)*params->sf);
++    }
++
++    // set cr <X>
++    if (arg_len > 3 && memcmp(arg, "cr ", 3) == 0) {
++      uint32_t v = _cfg_atoi(_skip_ws(arg + 3));
++      if (v < 5 || v > 8) return snprintf(reply, max_len, "ERR cr range 5-8");
++      *params->cr = (uint8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set cr=%u", (unsigned)v);
++      return snprintf(reply, max_len, "OK cr=%u", (unsigned)*params->cr);
++    }
++
++    // set power <X>
++    if (arg_len > 6 && memcmp(arg, "power ", 6) == 0) {
++      int v = (int)_cfg_atoi(_skip_ws(arg + 6));
++      // Handle negative: check if first non-space char is '-'
++      const char* vp = _skip_ws(arg + 6);
++      if (*vp == '-') v = -(int)_cfg_atoi(vp + 1);
++      if (v < -9 || v > 30) return snprintf(reply, max_len, "ERR power range -9 to 30");
++      *params->tx_power_dbm = (int8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set power=%d", v);
++      return snprintf(reply, max_len, "OK power=%ddBm", (int)*params->tx_power_dbm);
++    }
++
++    // set repeat <on|off>
++    if (params->client_repeat && arg_len > 7 && memcmp(arg, "repeat ", 7) == 0) {
++      const char* val = _skip_ws(arg + 7);
++      if (memcmp(val, "on", 2) == 0) {
++        *params->client_repeat = 1;
++      } else if (memcmp(val, "off", 3) == 0) {
++        *params->client_repeat = 0;
++      } else {
++        return snprintf(reply, max_len, "ERR use: set repeat on|off");
++      }
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set repeat=%s", *params->client_repeat ? "on" : "off");
++      return snprintf(reply, max_len, "OK repeat=%s", *params->client_repeat ? "on" : "off");
++    }
++
++    return snprintf(reply, max_len, "ERR unknown setting. Type 'help'");
++  }
++
++  // --- advert ---
++  if (len >= 6 && memcmp(cmd, "advert", 6) == 0) {
++    bool flood = false;
++    if (len > 7) {
++      const char* arg = _skip_ws(cmd + 6);
++      if (memcmp(arg, "flood", 5) == 0) flood = true;
++    }
++    actions->send_advert(actions->ctx, flood);
++    MESH_DEBUG_PRINTLN("ConfigCLI: advert sent (flood=%d)", (int)flood);
++    return snprintf(reply, max_len, "OK advert %ssent", flood ? "flood " : "");
++  }
++
++  // --- reboot ---
++  if (len == 6 && memcmp(cmd, "reboot", 6) == 0) {
++    int n = snprintf(reply, max_len, "Rebooting...");
++    MESH_DEBUG_PRINTLN("ConfigCLI: reboot requested");
++    // Note: actual reboot happens after reply is sent (caller should flush first)
++    // We set a flag via the action callback; caller handles the timing
++    actions->do_reboot(actions->ctx);
++    return n;  // reply may not actually be delivered if reboot is immediate
++  }
++
++  // --- unknown ---
++  MESH_DEBUG_PRINTLN("ConfigCLI: unknown cmd '%.*s'", len, cmd);
++  return snprintf(reply, max_len, "ERR unknown command. Type 'help'");
++}
++
++#endif // CONFIG_CLI_ENABLED
+diff --git a/src/helpers/ConfigCLI.h b/src/helpers/ConfigCLI.h
+new file mode 100644
+index 0000000..c437032
+--- /dev/null
++++ b/src/helpers/ConfigCLI.h
+@@ -0,0 +1,49 @@
++#pragma once
++
++#ifdef CONFIG_CLI_ENABLED
++
++#include <stdint.h>
++#include <stddef.h>
++
++struct ConfigCLIParams {
++  // Read/write config (pointers to firmware's own storage)
++  char* node_name;
++  int node_name_max;          // sizeof(node_name) for bounds check
++  float* freq;
++  float* bw;
++  uint8_t* sf;
++  uint8_t* cr;
++  int8_t* tx_power_dbm;
++  float* airtime_factor;
++  uint8_t* client_repeat;     // companion forwarding toggle (NULL if not applicable)
++
++  // Read-only status (filled before each call)
++  uint16_t batt_mv;
++  uint32_t uptime_secs;
++  int num_contacts;
++  int free_queue;
++  int total_queue;
++  uint32_t total_air_secs;
++  uint32_t rx_air_secs;
++  uint32_t n_sent_flood;
++  uint32_t n_sent_direct;
++  uint32_t n_recv_flood;
++  uint32_t n_recv_direct;
++  const char* firmware_ver;
++  const char* build_date;
++};
++
++struct ConfigCLIActions {
++  void (*save_prefs)(void* ctx);
++  void (*send_advert)(void* ctx, bool flood);
++  void (*do_reboot)(void* ctx);
++  void* ctx;
++};
++
++// Process a command, write reply into `reply` buffer.
++// `cmd` is the raw command text (sender prefix already stripped).
++// Returns length of reply, 0 if no output.
++int configCLI_handleCommand(const char* cmd, char* reply, int max_len,
++                            ConfigCLIParams* params, ConfigCLIActions* actions);
++
++#endif // CONFIG_CLI_ENABLED

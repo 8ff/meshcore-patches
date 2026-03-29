@@ -15,8 +15,9 @@
 |---|-------|------|-------------|------|
 | 01 | [firmware-retry](patches/01-firmware-retry.patch) | Companion | Keeps retrying DM and group messages in the background until they go through | [Details](patches/01-firmware-retry.md) |
 | 02 | [motion-detect](patches/02-motion-detect.patch) | Repeater | Motion detection via nRF52840 LPCOMP — sends channel alert + reports telemetry presence | [Details](patches/02-motion-detect.md) |
+| 03 | [config-cli](patches/03-config-cli.patch) | Companion | Private "config" channel for text-based CLI — manage settings from stock chat app, zero radio traffic | [Details](patches/03-config-cli.md) |
 
-Both patches are independent and can be combined.
+All patches are independent and can be combined.
 
 ---
 
