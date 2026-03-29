@@ -1,5 +1,5 @@
 diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
-index 32e3626..3a8943f 100644
+index 32e3626..506eb48 100644
 --- a/examples/companion_radio/MyMesh.cpp
 +++ b/examples/companion_radio/MyMesh.cpp
 @@ -801,6 +801,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
@@ -191,7 +191,7 @@ index 32e3626..3a8943f 100644
 +  }
 +  if (pkt) {
 +    if (flood) {
-+      m->sendFlood(pkt, 0, m->_prefs.path_hash_mode + 1);
++      m->sendFlood(pkt, (uint32_t)0, (uint8_t)(m->_prefs.path_hash_mode + 1));
 +    } else {
 +      m->sendZeroHop(pkt);
 +    }
