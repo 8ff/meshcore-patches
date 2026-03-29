@@ -272,10 +272,10 @@ index ba601c2..66828c8 100644
  
 diff --git a/src/helpers/ConfigCLI.cpp b/src/helpers/ConfigCLI.cpp
 new file mode 100644
-index 0000000..85913ab
+index 0000000..d1a1e5f
 --- /dev/null
 +++ b/src/helpers/ConfigCLI.cpp
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,243 @@
 +#ifdef CONFIG_CLI_ENABLED
 +
 +#include "ConfigCLI.h"
@@ -342,6 +342,19 @@ index 0000000..85913ab
 +  }
 +  if (len == 0) return 0;  // empty command
 +
++  // Lowercase the command portion for case-insensitive matching (preserves value args)
++  static char lcmd[172];
++  int copy_len = len < (int)sizeof(lcmd) - 1 ? len : (int)sizeof(lcmd) - 1;
++  for (int i = 0; i < copy_len; i++) {
++    lcmd[i] = (cmd[i] >= 'A' && cmd[i] <= 'Z') ? cmd[i] + 32 : cmd[i];
++  }
++  lcmd[copy_len] = 0;
++
++  // Use lcmd for keyword matching, but keep original cmd for value extraction (e.g. set name)
++  const char* orig_cmd = cmd;
++  cmd = lcmd;
++  len = copy_len;
++
 +  MESH_DEBUG_PRINTLN("ConfigCLI: cmd='%.*s' len=%d", len, cmd, len);
 +
 +  // --- help ---
@@ -394,9 +407,9 @@ index 0000000..85913ab
 +    const char* arg = cmd + 4;
 +    int arg_len = len - 4;
 +
-+    // set name <X>
++    // set name <X> — use original cmd to preserve case in the name value
 +    if (arg_len > 5 && memcmp(arg, "name ", 5) == 0) {
-+      const char* val = _skip_ws(arg + 5);
++      const char* val = _skip_ws(orig_cmd + 4 + 5);  // skip "set " + "name "
 +      if (*val == 0) return snprintf(reply, max_len, "ERR name cannot be empty");
 +      int nlen = strlen(val);
 +      if (nlen >= params->node_name_max) nlen = params->node_name_max - 1;
