@@ -1,5 +1,5 @@
 diff --git a/examples/companion_radio/MyMesh.cpp b/examples/companion_radio/MyMesh.cpp
-index 32e3626..43a2682 100644
+index 32e3626..506eb48 100644
 --- a/examples/companion_radio/MyMesh.cpp
 +++ b/examples/companion_radio/MyMesh.cpp
 @@ -801,6 +801,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
@@ -52,7 +52,7 @@ index 32e3626..43a2682 100644
        }
      }
    } else if (cmd_frame[0] == CMD_GET_CONTACTS) { // get Contact list
-@@ -2045,11 +2063,160 @@ void MyMesh::loop() {
+@@ -2045,11 +2063,159 @@ void MyMesh::loop() {
      dirty_contacts_expiry = 0;
    }
  
@@ -132,7 +132,6 @@ index 32e3626..43a2682 100644
 +  params.n_recv_direct  = getNumRecvDirect();
 +  params.firmware_ver   = FIRMWARE_VERSION;
 +  params.build_date     = FIRMWARE_BUILD_DATE;
-+  params.mcu_temp       = board.getMCUTemperature();
 +
 +  _cli_actions.save_prefs  = _cfgSavePrefs;
 +  _cli_actions.send_advert = _cfgSendAdvert;
@@ -273,17 +272,18 @@ index ba601c2..66828c8 100644
  
 diff --git a/src/helpers/ConfigCLI.cpp b/src/helpers/ConfigCLI.cpp
 new file mode 100644
-index 0000000..77651cd
+index 0000000..1cdd673
 --- /dev/null
 +++ b/src/helpers/ConfigCLI.cpp
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,252 @@
 +#ifdef CONFIG_CLI_ENABLED
 +
 +#include "ConfigCLI.h"
 +#include <string.h>
 +#include <stdio.h>
-+#include <MeshCore.h>
++#include <MeshCore.h>  // for MESH_DEBUG_PRINTLN
 +
++// Believe it or not, this std C function is busted on some platforms!
 +static uint32_t _cfg_atoi(const char* sp) {
 +  uint32_t n = 0;
 +  while (*sp && *sp >= '0' && *sp <= '9') {
@@ -297,6 +297,7 @@ index 0000000..77651cd
 +  float result = 0.0f;
 +  float sign = 1.0f;
 +  if (*sp == '-') { sign = -1.0f; sp++; }
++
 +  while (*sp >= '0' && *sp <= '9') {
 +    result = result * 10.0f + (*sp++ - '0');
 +  }
@@ -311,256 +312,228 @@ index 0000000..77651cd
 +  return result * sign;
 +}
 +
++// Skip leading whitespace
 +static const char* _skip_ws(const char* s) {
 +  while (*s == ' ' || *s == '\t') s++;
 +  return s;
-+}
-+
-+static char _lower(char c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
-+
-+// Case-insensitive prefix match: does input match at least min_len chars of target?
-+static bool _pmatch(const char* input, int input_len, const char* target, int min_len) {
-+  int tlen = strlen(target);
-+  if (input_len < min_len || input_len > tlen) return false;
-+  for (int i = 0; i < input_len; i++) {
-+    if (_lower(input[i]) != target[i]) return false;
-+  }
-+  return true;
 +}
 +
 +static void _format_uptime(char* buf, int max_len, uint32_t secs) {
 +  uint32_t d = secs / 86400;
 +  uint32_t h = (secs % 86400) / 3600;
 +  uint32_t m = (secs % 3600) / 60;
-+  if (d > 0) snprintf(buf, max_len, "%lud%luh%lum", (unsigned long)d, (unsigned long)h, (unsigned long)m);
-+  else if (h > 0) snprintf(buf, max_len, "%luh%lum", (unsigned long)h, (unsigned long)m);
-+  else snprintf(buf, max_len, "%lum", (unsigned long)m);
-+}
-+
-+// Extract first word length (up to space/tab/end). Does NOT copy — just returns length.
-+static int _word_len(const char* s, int max) {
-+  int i = 0;
-+  while (i < max && s[i] && s[i] != ' ' && s[i] != '\t') i++;
-+  return i;
-+}
-+
-+// Get pointer to args after the first word (skip word + whitespace)
-+static const char* _get_args(const char* s, int slen) {
-+  int i = 0;
-+  while (i < slen && s[i] && s[i] != ' ' && s[i] != '\t') i++;
-+  while (i < slen && (s[i] == ' ' || s[i] == '\t')) i++;
-+  return &s[i];
-+}
-+
-+enum {
-+  CMD_NONE = 0,
-+  CMD_HELP, CMD_STATUS, CMD_CONFIG, CMD_VER, CMD_TELEM,
-+  CMD_FREQ, CMD_BW, CMD_SF, CMD_CR, CMD_POWER, CMD_NAME, CMD_REPEAT,
-+  CMD_ADVERT, CMD_REBOOT,
-+  CMD_AMBIGUOUS
-+};
-+
-+static int _match_cmd(const char* word, int wlen) {
-+  if (wlen == 1 && word[0] == '?') return CMD_HELP;
-+
-+  char w0 = _lower(word[0]);
-+  char w1 = wlen >= 2 ? _lower(word[1]) : 0;
-+
-+  if (_pmatch(word, wlen, "help", 1)) return CMD_HELP;
-+  if (_pmatch(word, wlen, "status", 1)) return CMD_STATUS;
-+  if (_pmatch(word, wlen, "ver", 1)) return CMD_VER;
-+  if (_pmatch(word, wlen, "telem", 1)) return CMD_TELEM;
-+
-+  // c alone = config, cr = coding rate, co+ = config
-+  if (wlen == 1 && w0 == 'c') return CMD_CONFIG;
-+  if (wlen >= 2 && w0 == 'c' && w1 == 'r') return CMD_CR;
-+  if (wlen >= 2 && w0 == 'c' && w1 == 'o') return CMD_CONFIG;
-+
-+  if (_pmatch(word, wlen, "freq", 1)) return CMD_FREQ;
-+  if (_pmatch(word, wlen, "bw", 1)) return CMD_BW;
-+  if (wlen >= 2 && w0 == 's' && w1 == 'f') return CMD_SF;
-+  if (_pmatch(word, wlen, "power", 1)) return CMD_POWER;
-+  if (_pmatch(word, wlen, "name", 1)) return CMD_NAME;
-+  if (_pmatch(word, wlen, "advert", 1)) return CMD_ADVERT;
-+
-+  if (wlen >= 2 && w0 == 'r' && w1 == 'e') {
-+    if (wlen == 2) return CMD_AMBIGUOUS;
-+    if (_pmatch(word, wlen, "reboot", 3)) return CMD_REBOOT;
-+    if (_pmatch(word, wlen, "repeat", 3)) return CMD_REPEAT;
++  if (d > 0) {
++    snprintf(buf, max_len, "%lud%luh%lum", (unsigned long)d, (unsigned long)h, (unsigned long)m);
++  } else if (h > 0) {
++    snprintf(buf, max_len, "%luh%lum", (unsigned long)h, (unsigned long)m);
++  } else {
++    snprintf(buf, max_len, "%lum", (unsigned long)m);
 +  }
-+
-+  return CMD_NONE;
 +}
 +
 +int configCLI_handleCommand(const char* cmd, char* reply, int max_len,
 +                            ConfigCLIParams* params, ConfigCLIActions* actions) {
 +  cmd = _skip_ws(cmd);
-+  if (!cmd || !*cmd) return 0;
-+
-+  // Trim trailing whitespace
 +  int len = strlen(cmd);
-+  while (len > 0 && (cmd[len-1] <= ' ')) len--;
-+  if (len == 0) return 0;
 +
-+  // Get first word and args (no copies — just pointers into cmd)
-+  int wlen = _word_len(cmd, len);
-+  const char* args = _get_args(cmd, len);
-+
-+  MESH_DEBUG_PRINTLN("ConfigCLI: word='%.*s' args='%s'", wlen, cmd, args);
-+
-+  // Handle "set X Y" — re-parse subcommand
-+  if (wlen == 3 && _pmatch(cmd, 3, "set", 3)) {
-+    args = _skip_ws(args);
-+    cmd = args;
-+    len = strlen(cmd);
-+    wlen = _word_len(cmd, len);
-+    args = _get_args(cmd, len);
++  // Strip trailing whitespace/CR/LF
++  while (len > 0 && (cmd[len-1] == ' ' || cmd[len-1] == '\r' || cmd[len-1] == '\n' || cmd[len-1] == 0)) {
++    len--;
 +  }
++  if (len == 0) return 0;  // empty command
 +
-+  // Handle "get config"
-+  if (wlen == 3 && _pmatch(cmd, 3, "get", 3)) {
-+    const char* sub = _skip_ws(args);
-+    int swlen = _word_len(sub, strlen(sub));
-+    if (_pmatch(sub, swlen, "config", 1)) {
-+      return configCLI_handleCommand("config", reply, max_len, params, actions);
-+    }
-+  }
-+
-+  int id = _match_cmd(cmd, wlen);
-+
-+  switch (id) {
-+    case CMD_HELP:
-+      return snprintf(reply, max_len,
-+        "? s c v t f b sf cr p n%s a[dvert] reb[oot]",
-+        params->client_repeat ? " rep[eat]" : "");
-+
-+    case CMD_STATUS: {
-+      char up[24];
-+      _format_uptime(up, sizeof(up), params->uptime_secs);
-+      return snprintf(reply, max_len,
-+        "Batt:%umV Up:%s Air:%lus/%lus Pkts:%lu/%luF %lu/%luD Q:%d/%d C:%d",
-+        (unsigned)params->batt_mv, up,
-+        (unsigned long)params->total_air_secs, (unsigned long)params->rx_air_secs,
-+        (unsigned long)params->n_sent_flood, (unsigned long)params->n_recv_flood,
-+        (unsigned long)params->n_sent_direct, (unsigned long)params->n_recv_direct,
-+        params->free_queue, params->total_queue, params->num_contacts);
-+    }
-+
-+    case CMD_CONFIG:
-+      return snprintf(reply, max_len,
-+        "n:%s f:%.3f b:%.1f sf:%u cr:%u p:%ddBm af:%.1f%s",
-+        params->node_name,
-+        (double)*params->freq, (double)*params->bw,
-+        (unsigned)*params->sf, (unsigned)*params->cr,
-+        (int)*params->tx_power_dbm, (double)*params->airtime_factor,
-+        (params->client_repeat && *params->client_repeat) ? " rpt:on" :
-+        (params->client_repeat ? " rpt:off" : ""));
-+
-+    case CMD_VER:
-+      return snprintf(reply, max_len, "%s (%s)",
-+                      params->firmware_ver ? params->firmware_ver : "?",
-+                      params->build_date ? params->build_date : "?");
-+
-+    case CMD_TELEM: {
-+      char up[24];
-+      _format_uptime(up, sizeof(up), params->uptime_secs);
-+      int n = snprintf(reply, max_len, "Batt:%umV Up:%s", (unsigned)params->batt_mv, up);
-+      if (params->mcu_temp == params->mcu_temp) {  // NAN != NAN
-+        n += snprintf(reply + n, max_len - n, " MCU:%.1fC", (double)params->mcu_temp);
++  // Lowercase command keywords in-place for case-insensitive matching.
++  // Safe: caller owns the buffer (cmd_frame) and null-terminated it.
++  // We lowercase everything EXCEPT the value after "set name " to preserve name case.
++  {
++    char* p = (char*)cmd;
++    // First, check if this is a "set name" command (case-insensitive check on first 9 chars)
++    bool is_set_name = (len > 9);
++    if (is_set_name) {
++      // Check "set name " with manual case-insensitive compare
++      const char* expect = "set name ";
++      for (int j = 0; j < 9; j++) {
++        char c = p[j];
++        if (c >= 'A' && c <= 'Z') c += 32;
++        if (c != expect[j]) { is_set_name = false; break; }
 +      }
-+      return n;
 +    }
-+
-+    case CMD_FREQ: {
-+      if (!*args) return snprintf(reply, max_len, "f:%.3f", (double)*params->freq);
-+      float v = _cfg_atof(args);
-+      if (v < 400.0f || v > 2500.0f) return snprintf(reply, max_len, "ERR freq 400-2500");
-+      *params->freq = v;
-+      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok f=%.3f", (double)*params->freq);
++    int lc_end = is_set_name ? 9 : len;
++    for (int j = 0; j < lc_end; j++) {
++      if (p[j] >= 'A' && p[j] <= 'Z') p[j] += 32;
 +    }
++  }
 +
-+    case CMD_BW: {
-+      if (!*args) return snprintf(reply, max_len, "b:%.1f", (double)*params->bw);
-+      float v = _cfg_atof(args);
-+      if (v < 7.8f || v > 500.0f) return snprintf(reply, max_len, "ERR bw 7.8-500");
-+      *params->bw = v;
-+      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok b=%.1f", (double)*params->bw);
++  MESH_DEBUG_PRINTLN("ConfigCLI: cmd='%.*s' len=%d", len, cmd, len);
++
++  // --- help ---
++  if (len == 4 && memcmp(cmd, "help", 4) == 0) {
++    return snprintf(reply, max_len,
++      "Commands: help, status, get config, "
++      "set name/freq/bw/sf/cr/power%s, "
++      "advert [flood], reboot",
++      params->client_repeat ? "/repeat" : "");
++  }
++
++  // --- status ---
++  if (len == 6 && memcmp(cmd, "status", 6) == 0) {
++    char uptime_buf[24];
++    _format_uptime(uptime_buf, sizeof(uptime_buf), params->uptime_secs);
++    return snprintf(reply, max_len,
++      "Batt: %umV  Up: %s  Air: %lus tx/%lus rx  "
++      "Pkts: %lu/%lu F %lu/%lu D  "
++      "Queue: %d/%d  Contacts: %d",
++      (unsigned)params->batt_mv, uptime_buf,
++      (unsigned long)params->total_air_secs, (unsigned long)params->rx_air_secs,
++      (unsigned long)params->n_sent_flood, (unsigned long)params->n_recv_flood,
++      (unsigned long)params->n_sent_direct, (unsigned long)params->n_recv_direct,
++      params->free_queue, params->total_queue, params->num_contacts);
++  }
++
++  // --- get config ---
++  if (len == 10 && memcmp(cmd, "get config", 10) == 0) {
++    int n = snprintf(reply, max_len,
++      "Name: %s  Freq: %.3f  BW: %.1f  SF: %u  CR: %u  "
++      "Power: %ddBm  Airtime: %.1f",
++      params->node_name,
++      (double)*params->freq, (double)*params->bw,
++      (unsigned)*params->sf, (unsigned)*params->cr,
++      (int)*params->tx_power_dbm, (double)*params->airtime_factor);
++    if (params->client_repeat && n < max_len - 20) {
++      n += snprintf(reply + n, max_len - n, "  Repeat: %s",
++                    *params->client_repeat ? "on" : "off");
 +    }
-+
-+    case CMD_SF: {
-+      if (!*args) return snprintf(reply, max_len, "sf:%u", (unsigned)*params->sf);
-+      uint32_t v = _cfg_atoi(args);
-+      if (v < 5 || v > 12) return snprintf(reply, max_len, "ERR sf 5-12");
-+      *params->sf = (uint8_t)v;
-+      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok sf=%u", (unsigned)*params->sf);
++    if (n < max_len - 30) {
++      n += snprintf(reply + n, max_len - n, "  FW: %s (%s)",
++                    params->firmware_ver ? params->firmware_ver : "?",
++                    params->build_date ? params->build_date : "?");
 +    }
++    return n;
++  }
 +
-+    case CMD_CR: {
-+      if (!*args) return snprintf(reply, max_len, "cr:%u", (unsigned)*params->cr);
-+      uint32_t v = _cfg_atoi(args);
-+      if (v < 5 || v > 8) return snprintf(reply, max_len, "ERR cr 5-8");
-+      *params->cr = (uint8_t)v;
-+      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok cr=%u", (unsigned)*params->cr);
-+    }
++  // --- set commands ---
++  if (len > 4 && memcmp(cmd, "set ", 4) == 0) {
++    const char* arg = cmd + 4;
++    int arg_len = len - 4;
 +
-+    case CMD_POWER: {
-+      if (!*args) return snprintf(reply, max_len, "p:%ddBm", (int)*params->tx_power_dbm);
-+      int v = (*args == '-') ? -(int)_cfg_atoi(args + 1) : (int)_cfg_atoi(args);
-+      if (v < -9 || v > 30) return snprintf(reply, max_len, "ERR power -9..30");
-+      *params->tx_power_dbm = (int8_t)v;
-+      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok p=%ddBm", (int)*params->tx_power_dbm);
-+    }
-+
-+    case CMD_NAME: {
-+      if (!*args) return snprintf(reply, max_len, "n:%s", params->node_name);
-+      int nlen = strlen(args);
++    // set name <X>
++    if (arg_len > 5 && memcmp(arg, "name ", 5) == 0) {
++      const char* val = _skip_ws(arg + 5);
++      if (*val == 0) return snprintf(reply, max_len, "ERR name cannot be empty");
++      int nlen = strlen(val);
 +      if (nlen >= params->node_name_max) nlen = params->node_name_max - 1;
-+      memcpy(params->node_name, args, nlen);
++      memcpy(params->node_name, val, nlen);
 +      params->node_name[nlen] = 0;
 +      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok n=%s", params->node_name);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set name='%s'", params->node_name);
++      return snprintf(reply, max_len, "OK name=%s", params->node_name);
 +    }
 +
-+    case CMD_REPEAT: {
-+      if (!params->client_repeat) return snprintf(reply, max_len, "ERR n/a");
-+      if (!*args) return snprintf(reply, max_len, "rpt:%s", *params->client_repeat ? "on" : "off");
-+      if (_lower(args[0]) == 'o' && _lower(args[1]) == 'n') *params->client_repeat = 1;
-+      else if (_lower(args[0]) == 'o' && _lower(args[1]) == 'f') *params->client_repeat = 0;
-+      else return snprintf(reply, max_len, "ERR rep on|off");
++    // set freq <X>
++    if (arg_len > 5 && memcmp(arg, "freq ", 5) == 0) {
++      float v = _cfg_atof(_skip_ws(arg + 5));
++      if (v < 400.0f || v > 2500.0f) return snprintf(reply, max_len, "ERR freq range 400-2500");
++      *params->freq = v;
 +      actions->save_prefs(actions->ctx);
-+      return snprintf(reply, max_len, "ok rpt=%s", *params->client_repeat ? "on" : "off");
++      MESH_DEBUG_PRINTLN("ConfigCLI: set freq=%.3f", (double)v);
++      return snprintf(reply, max_len, "OK freq=%.3f", (double)*params->freq);
 +    }
 +
-+    case CMD_ADVERT: {
-+      bool flood = (*args && _pmatch(args, _word_len(args, strlen(args)), "flood", 1));
-+      actions->send_advert(actions->ctx, flood);
-+      return snprintf(reply, max_len, "ok advert%s sent", flood ? " flood" : "");
++    // set bw <X>
++    if (arg_len > 3 && memcmp(arg, "bw ", 3) == 0) {
++      float v = _cfg_atof(_skip_ws(arg + 3));
++      if (v < 7.8f || v > 500.0f) return snprintf(reply, max_len, "ERR bw range 7.8-500");
++      *params->bw = v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set bw=%.1f", (double)v);
++      return snprintf(reply, max_len, "OK bw=%.1f", (double)*params->bw);
 +    }
 +
-+    case CMD_REBOOT:
-+      actions->do_reboot(actions->ctx);
-+      return snprintf(reply, max_len, "Rebooting...");
++    // set sf <X>
++    if (arg_len > 3 && memcmp(arg, "sf ", 3) == 0) {
++      uint32_t v = _cfg_atoi(_skip_ws(arg + 3));
++      if (v < 5 || v > 12) return snprintf(reply, max_len, "ERR sf range 5-12");
++      *params->sf = (uint8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set sf=%u", (unsigned)v);
++      return snprintf(reply, max_len, "OK sf=%u", (unsigned)*params->sf);
++    }
 +
-+    case CMD_AMBIGUOUS:
-+      return snprintf(reply, max_len, "ERR ambiguous: reboot, repeat");
++    // set cr <X>
++    if (arg_len > 3 && memcmp(arg, "cr ", 3) == 0) {
++      uint32_t v = _cfg_atoi(_skip_ws(arg + 3));
++      if (v < 5 || v > 8) return snprintf(reply, max_len, "ERR cr range 5-8");
++      *params->cr = (uint8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set cr=%u", (unsigned)v);
++      return snprintf(reply, max_len, "OK cr=%u", (unsigned)*params->cr);
++    }
 +
-+    default:
-+      return snprintf(reply, max_len, "ERR unknown. ? for help");
++    // set power <X>
++    if (arg_len > 6 && memcmp(arg, "power ", 6) == 0) {
++      int v = (int)_cfg_atoi(_skip_ws(arg + 6));
++      // Handle negative: check if first non-space char is '-'
++      const char* vp = _skip_ws(arg + 6);
++      if (*vp == '-') v = -(int)_cfg_atoi(vp + 1);
++      if (v < -9 || v > 30) return snprintf(reply, max_len, "ERR power range -9 to 30");
++      *params->tx_power_dbm = (int8_t)v;
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set power=%d", v);
++      return snprintf(reply, max_len, "OK power=%ddBm", (int)*params->tx_power_dbm);
++    }
++
++    // set repeat <on|off>
++    if (params->client_repeat && arg_len > 7 && memcmp(arg, "repeat ", 7) == 0) {
++      const char* val = _skip_ws(arg + 7);
++      if (memcmp(val, "on", 2) == 0) {
++        *params->client_repeat = 1;
++      } else if (memcmp(val, "off", 3) == 0) {
++        *params->client_repeat = 0;
++      } else {
++        return snprintf(reply, max_len, "ERR use: set repeat on|off");
++      }
++      actions->save_prefs(actions->ctx);
++      MESH_DEBUG_PRINTLN("ConfigCLI: set repeat=%s", *params->client_repeat ? "on" : "off");
++      return snprintf(reply, max_len, "OK repeat=%s", *params->client_repeat ? "on" : "off");
++    }
++
++    return snprintf(reply, max_len, "ERR unknown setting. Type 'help'");
 +  }
++
++  // --- advert ---
++  if (len >= 6 && memcmp(cmd, "advert", 6) == 0) {
++    bool flood = false;
++    if (len > 7) {
++      const char* arg = _skip_ws(cmd + 6);
++      if (memcmp(arg, "flood", 5) == 0) flood = true;
++    }
++    actions->send_advert(actions->ctx, flood);
++    MESH_DEBUG_PRINTLN("ConfigCLI: advert sent (flood=%d)", (int)flood);
++    return snprintf(reply, max_len, "OK advert %ssent", flood ? "flood " : "");
++  }
++
++  // --- reboot ---
++  if (len == 6 && memcmp(cmd, "reboot", 6) == 0) {
++    int n = snprintf(reply, max_len, "Rebooting...");
++    MESH_DEBUG_PRINTLN("ConfigCLI: reboot requested");
++    // Note: actual reboot happens after reply is sent (caller should flush first)
++    // We set a flag via the action callback; caller handles the timing
++    actions->do_reboot(actions->ctx);
++    return n;  // reply may not actually be delivered if reboot is immediate
++  }
++
++  // --- unknown ---
++  MESH_DEBUG_PRINTLN("ConfigCLI: unknown cmd '%.*s'", len, cmd);
++  return snprintf(reply, max_len, "ERR unknown command. Type 'help'");
 +}
 +
-+#endif
++#endif // CONFIG_CLI_ENABLED
 diff --git a/src/helpers/ConfigCLI.h b/src/helpers/ConfigCLI.h
 new file mode 100644
-index 0000000..9de6803
+index 0000000..c437032
 --- /dev/null
 +++ b/src/helpers/ConfigCLI.h
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,49 @@
 +#pragma once
 +
 +#ifdef CONFIG_CLI_ENABLED
@@ -594,7 +567,6 @@ index 0000000..9de6803
 +  uint32_t n_recv_direct;
 +  const char* firmware_ver;
 +  const char* build_date;
-+  float mcu_temp;           // MCU temperature in C (NAN if unavailable)
 +};
 +
 +struct ConfigCLIActions {
