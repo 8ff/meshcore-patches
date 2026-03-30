@@ -272,7 +272,7 @@ index ba601c2..66828c8 100644
  
 diff --git a/src/helpers/ConfigCLI.cpp b/src/helpers/ConfigCLI.cpp
 new file mode 100644
-index 0000000..1cdd673
+index 0000000..e15a53a
 --- /dev/null
 +++ b/src/helpers/ConfigCLI.cpp
 @@ -0,0 +1,252 @@
@@ -367,7 +367,7 @@ index 0000000..1cdd673
 +  MESH_DEBUG_PRINTLN("ConfigCLI: cmd='%.*s' len=%d", len, cmd, len);
 +
 +  // --- help ---
-+  if (len == 4 && memcmp(cmd, "help", 4) == 0) {
++  if ((len == 1 && cmd[0] == '?') || (len == 4 && memcmp(cmd, "help", 4) == 0)) {
 +    return snprintf(reply, max_len,
 +      "Commands: help, status, get config, "
 +      "set name/freq/bw/sf/cr/power%s, "
@@ -501,15 +501,15 @@ index 0000000..1cdd673
 +  }
 +
 +  // --- advert ---
-+  if (len >= 6 && memcmp(cmd, "advert", 6) == 0) {
-+    bool flood = false;
-+    if (len > 7) {
-+      const char* arg = _skip_ws(cmd + 6);
-+      if (memcmp(arg, "flood", 5) == 0) flood = true;
-+    }
-+    actions->send_advert(actions->ctx, flood);
-+    MESH_DEBUG_PRINTLN("ConfigCLI: advert sent (flood=%d)", (int)flood);
-+    return snprintf(reply, max_len, "OK advert %ssent", flood ? "flood " : "");
++  if (len == 6 && memcmp(cmd, "advert", 6) == 0) {
++    actions->send_advert(actions->ctx, false);
++    MESH_DEBUG_PRINTLN("ConfigCLI: advert sent");
++    return snprintf(reply, max_len, "OK advert sent");
++  }
++  if (len == 12 && memcmp(cmd, "advert flood", 12) == 0) {
++    actions->send_advert(actions->ctx, true);
++    MESH_DEBUG_PRINTLN("ConfigCLI: advert flood sent");
++    return snprintf(reply, max_len, "OK advert flood sent");
 +  }
 +
 +  // --- reboot ---
