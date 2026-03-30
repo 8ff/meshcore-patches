@@ -272,10 +272,10 @@ index ba601c2..66828c8 100644
  
 diff --git a/src/helpers/ConfigCLI.cpp b/src/helpers/ConfigCLI.cpp
 new file mode 100644
-index 0000000..e15a53a
+index 0000000..c1926ac
 --- /dev/null
 +++ b/src/helpers/ConfigCLI.cpp
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,306 @@
 +#ifdef CONFIG_CLI_ENABLED
 +
 +#include "ConfigCLI.h"
@@ -369,10 +369,64 @@ index 0000000..e15a53a
 +  // --- help ---
 +  if ((len == 1 && cmd[0] == '?') || (len == 4 && memcmp(cmd, "help", 4) == 0)) {
 +    return snprintf(reply, max_len,
-+      "Commands: help, status, get config, "
-+      "set name/freq/bw/sf/cr/power%s, "
-+      "advert [flood], reboot",
-+      params->client_repeat ? "/repeat" : "");
++      "? status get config set <param> advert reboot | "
++      "help <cmd> for details");
++  }
++  if (len > 5 && memcmp(cmd, "help ", 5) == 0) {
++    const char* topic = _skip_ws(cmd + 5);
++    int tlen = strlen(topic);
++    // trim trailing whitespace from topic
++    while (tlen > 0 && topic[tlen-1] == ' ') tlen--;
++
++    if (tlen == 3 && memcmp(topic, "set", 3) == 0) {
++      return snprintf(reply, max_len,
++        "set name <text> | set freq <400-2500> | set bw <7.8-500> | "
++        "set sf <5-12> | set cr <5-8> | set power <-9 to 30>%s",
++        params->client_repeat ? " | set repeat <on|off>" : "");
++    }
++    if (tlen == 6 && memcmp(topic, "status", 6) == 0) {
++      return snprintf(reply, max_len,
++        "status: battery mV, uptime, airtime tx/rx, "
++        "packets sent/recv flood/direct, queue free/total, contacts");
++    }
++    if ((tlen == 3 && memcmp(topic, "get", 3) == 0) ||
++        (tlen == 6 && memcmp(topic, "config", 6) == 0) ||
++        (tlen == 10 && memcmp(topic, "get config", 10) == 0)) {
++      return snprintf(reply, max_len,
++        "get config: name, freq, bw, sf, cr, power, airtime factor%s, firmware ver",
++        params->client_repeat ? ", repeat" : "");
++    }
++    if (tlen == 6 && memcmp(topic, "advert", 6) == 0) {
++      return snprintf(reply, max_len,
++        "advert: send zero-hop advertisement | "
++        "advert flood: send flood advertisement to mesh");
++    }
++    if (tlen == 6 && memcmp(topic, "reboot", 6) == 0) {
++      return snprintf(reply, max_len, "reboot: restart device (500ms delay for reply delivery)");
++    }
++    if (tlen == 4 && memcmp(topic, "name", 4) == 0) {
++      return snprintf(reply, max_len, "set name <text>: node name, max %d chars", params->node_name_max - 1);
++    }
++    if (tlen == 4 && memcmp(topic, "freq", 4) == 0) {
++      return snprintf(reply, max_len, "set freq <MHz>: LoRa frequency, 400-2500 (current: %.3f)", (double)*params->freq);
++    }
++    if (tlen == 2 && memcmp(topic, "bw", 2) == 0) {
++      return snprintf(reply, max_len, "set bw <kHz>: bandwidth, 7.8-500 (current: %.1f)", (double)*params->bw);
++    }
++    if (tlen == 2 && memcmp(topic, "sf", 2) == 0) {
++      return snprintf(reply, max_len, "set sf <5-12>: spreading factor (current: %u)", (unsigned)*params->sf);
++    }
++    if (tlen == 2 && memcmp(topic, "cr", 2) == 0) {
++      return snprintf(reply, max_len, "set cr <5-8>: coding rate (current: %u)", (unsigned)*params->cr);
++    }
++    if (tlen == 5 && memcmp(topic, "power", 5) == 0) {
++      return snprintf(reply, max_len, "set power <dBm>: TX power, -9 to 30 (current: %d)", (int)*params->tx_power_dbm);
++    }
++    if (params->client_repeat && tlen == 6 && memcmp(topic, "repeat", 6) == 0) {
++      return snprintf(reply, max_len, "set repeat <on|off>: packet forwarding (current: %s)",
++                      *params->client_repeat ? "on" : "off");
++    }
++    return snprintf(reply, max_len, "Unknown topic. Try: help set, help status, help advert");
 +  }
 +
 +  // --- status ---
